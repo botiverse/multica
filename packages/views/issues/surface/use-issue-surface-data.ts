@@ -74,6 +74,7 @@ export function useIssueSurfaceData({
   assigneeFilters,
   includeNoAssignee,
   creatorFilters,
+  teamFilter,
   projectFilters,
   includeNoProject,
   labelFilters,
@@ -92,6 +93,7 @@ export function useIssueSurfaceData({
   assigneeFilters: IssueFilterState["assigneeFilters"];
   includeNoAssignee: boolean;
   creatorFilters: IssueFilterState["creatorFilters"];
+  teamFilter: string | null;
   projectFilters: string[];
   includeNoProject: boolean;
   labelFilters: string[];
@@ -113,6 +115,7 @@ export function useIssueSurfaceData({
       assignee_filters: assigneeFilters,
       include_no_assignee: includeNoAssignee,
       creator_filters: creatorFilters,
+      team_id: teamFilter ?? undefined,
       project_ids: projectFilters,
       include_no_project: includeNoProject,
       label_ids: labelFilters,
@@ -127,6 +130,7 @@ export function useIssueSurfaceData({
       projectFilters,
       queryPlan.groupedScopeFilter,
       statusFilters,
+      teamFilter,
     ],
   );
 

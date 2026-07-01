@@ -126,6 +126,7 @@ export function useIssueSurfaceController({
   const assigneeFilters = useViewStore((s) => s.assigneeFilters);
   const includeNoAssignee = useViewStore((s) => s.includeNoAssignee);
   const creatorFilters = useViewStore((s) => s.creatorFilters);
+  const teamFilter = useViewStore((s) => s.teamFilter);
   const projectFilters = useViewStore((s) => s.projectFilters);
   const includeNoProject = useViewStore((s) => s.includeNoProject);
   const labelFilters = useViewStore((s) => s.labelFilters);
@@ -160,8 +161,9 @@ export function useIssueSurfaceController({
       sort_by: sortBy,
       sort_direction: sortBy !== "position" ? sortDirection : undefined,
       ...dateParams,
+      ...(teamFilter ? { team_id: teamFilter } : {}),
     }),
-    [dateParams, sortBy, sortDirection],
+    [dateParams, sortBy, sortDirection, teamFilter],
   );
 
   const selection = useCreateIssueSurfaceSelection(
@@ -195,6 +197,7 @@ export function useIssueSurfaceController({
     assigneeFilters,
     includeNoAssignee,
     creatorFilters,
+    teamFilter,
     projectFilters: viewProjectFilters,
     includeNoProject: viewIncludeNoProject,
     labelFilters,

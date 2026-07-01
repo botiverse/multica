@@ -26,6 +26,7 @@ import { TitleEditor, ContentEditor, type ContentEditorRef } from "../../editor"
 import { PriorityIcon } from "../../issues/components/priority-icon";
 import { ProjectResourcesSection } from "./project-resources-section";
 import { IssueSurface } from "../../issues/surface/issue-surface";
+import { TeamMultiPicker } from "../../teams/components/team-picker";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@multica/ui/components/ui/resizable";
@@ -397,6 +398,13 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 </div>
               </PopoverContent>
             </Popover>
+          </PropRow>
+          <PropRow label={t(($) => $.table.teams)}>
+            <TeamMultiPicker
+              teamIds={project.team_ids ?? []}
+              onChange={(teamIds) => handleUpdateField({ team_ids: teamIds })}
+              align="start"
+            />
           </PropRow>
         </div>}
       </div>
