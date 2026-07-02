@@ -33,11 +33,6 @@ UPDATE workspace SET
 WHERE id = $1
 RETURNING *;
 
--- name: IncrementIssueCounter :one
-UPDATE workspace SET issue_counter = issue_counter + 1
-WHERE id = $1
-RETURNING issue_counter;
-
 -- name: DeleteWorkspace :exec
 -- The channel_* tables carry NO FK to workspace (MUL-3515 §4), so — unlike the
 -- CASCADE-backed tables the DELETE below sweeps — they are not cleaned up
