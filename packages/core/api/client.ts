@@ -152,7 +152,7 @@ import type {
 import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
-import { parseWithFallback } from "./schema";
+import { parseWithFallback, parseOrWarn } from "./schema";
 import {
   AgentTaskListSchema,
   AgentTemplateSchema,
@@ -198,6 +198,7 @@ import {
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
   ListIssuesResponseSchema,
   ListTeamsResponseSchema,
+  TeamSchema,
   ListWebhookDeliveriesResponseSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
@@ -1633,21 +1634,24 @@ export class ApiClient {
   }
 
   async createTeam(data: CreateTeamRequest): Promise<Team> {
-    return this.fetch("/api/teams", {
+    const raw = await this.fetch<unknown>("/api/teams", {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseOrWarn(raw, TeamSchema, { endpoint: "POST /api/teams" });
   }
 
   async updateTeam(id: string, data: UpdateTeamRequest): Promise<Team> {
-    return this.fetch(`/api/teams/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/teams/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     });
+    return parseOrWarn(raw, TeamSchema, { endpoint: "PATCH /api/teams/:id" });
   }
 
   async archiveTeam(id: string): Promise<Team> {
-    return this.fetch(`/api/teams/${id}`, { method: "DELETE" });
+    const raw = await this.fetch<unknown>(`/api/teams/${id}`, { method: "DELETE" });
+    return parseOrWarn(raw, TeamSchema, { endpoint: "DELETE /api/teams/:id" });
   }
 
   // Members
