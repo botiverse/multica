@@ -32,6 +32,7 @@ vi.mock("@dnd-kit/core", () => ({
   DndContext: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   PointerSensor: vi.fn(),
   closestCenter: vi.fn(),
+  MeasuringStrategy: { Always: "always" },
   useSensor: vi.fn(),
   useSensors: vi.fn(),
 }));
