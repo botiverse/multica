@@ -1029,4 +1029,5 @@ type WorkspaceTeamMember struct {
 	UserID      pgtype.UUID        `json:"user_id"`
 	Role        string             `json:"role"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	SortOrder   float64            `json:"sort_order"`
 }
