@@ -56,7 +56,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions, agentListOptions, squadListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
-import { teamListOptions } from "@multica/core/teams/queries";
+import { activeTeamListOptions } from "@multica/core/teams/queries";
 import { labelListOptions } from "@multica/core/labels/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -374,10 +374,9 @@ function TeamSubContent({
   const { t } = useT("issues");
   const [search, setSearch] = useState("");
   const wsId = useWorkspaceId();
-  const { data: teams = [] } = useQuery(teamListOptions(wsId));
+  const { data: teams = [] } = useQuery(activeTeamListOptions(wsId));
   const query = search.trim().toLowerCase();
-  const activeTeams = teams.filter((team) => !team.archived_at);
-  const filtered = activeTeams.filter((team) =>
+  const filtered = teams.filter((team) =>
     team.name.toLowerCase().includes(query) ||
     team.key.toLowerCase().includes(query),
   );
