@@ -213,13 +213,13 @@ function SortableTeamGroup({
   team,
   pathname,
   buildHref,
-  settingsHref,
+  detailHref,
   forceCollapsed,
 }: {
   team: Team;
   pathname: string;
   buildHref: (pathKey: (typeof teamChildNav)[number]["pathKey"], teamKey: string) => string;
-  settingsHref: string;
+  detailHref: string;
   /** True while any team drag is in flight: every group renders collapsed so
       all sortable items are the same height — variable-height blocks make
       dnd-kit's rect math (and thus the whole gesture) feel broken. */
@@ -235,11 +235,10 @@ function SortableTeamGroup({
   useEffect(() => {
     if (isDragging) wasDragged.current = true;
   }, [isDragging]);
-  // The row itself is the team's home (overview/settings). It stays
-  // highlighted anywhere inside the team (issues/projects/autopilots too) so
-  // the sidebar always shows which team you're in.
-  const teamBase = settingsHref.replace(/\/settings$/, "");
-  const isTeamActive = isNavActive(pathname, teamBase);
+  // The row itself is the team's home (detail page). It stays highlighted
+  // anywhere inside the team (issues/projects/autopilots too) so the sidebar
+  // always shows which team you're in.
+  const isTeamActive = isNavActive(pathname, detailHref);
   return (
     <div
       ref={setNodeRef}
@@ -255,7 +254,7 @@ function SortableTeamGroup({
             the row; the 5px activation distance keeps clicks working. */}
         <div {...attributes} {...listeners}>
           <SidebarGroupLabel
-            render={<AppLink href={settingsHref} draggable={false} />}
+            render={<AppLink href={detailHref} draggable={false} />}
             onClick={(event) => {
               if (wasDragged.current) {
                 wasDragged.current = false;
@@ -280,7 +279,7 @@ function SortableTeamGroup({
                 e.stopPropagation();
                 collapse.onOpenChange(!collapse.open);
               }}
-              className="ml-1 flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              className="-ml-1 flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
             >
               <ChevronRight
                 className={cn(
@@ -1063,7 +1062,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                             team={team}
                             pathname={pathname}
                             buildHref={(pathKey, teamKey) => p[pathKey](teamKey)}
-                            settingsHref={p.teamSettings(team.key)}
+                            detailHref={p.teamDetail(team.key)}
                           />
                         ))}
                       </SortableContext>
