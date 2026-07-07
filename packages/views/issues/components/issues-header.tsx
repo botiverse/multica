@@ -56,7 +56,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions, agentListOptions, squadListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
-import { activeTeamListOptions } from "@multica/core/teams/queries";
+import { activeSpaceListOptions } from "@multica/core/spaces/queries";
 import { labelListOptions } from "@multica/core/labels/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -102,7 +102,7 @@ function getActiveFilterCount(state: {
   assigneeFilters: ActorFilterValue[];
   includeNoAssignee: boolean;
   creatorFilters: ActorFilterValue[];
-  teamFilter?: string | null;
+  spaceFilter?: string | null;
   projectFilters: string[];
   includeNoProject: boolean;
   labelFilters: string[];
@@ -113,7 +113,7 @@ function getActiveFilterCount(state: {
   if (state.priorityFilters.length > 0) count++;
   if (state.assigneeFilters.length > 0 || state.includeNoAssignee) count++;
   if (state.creatorFilters.length > 0) count++;
-  if (state.teamFilter) count++;
+  if (state.spaceFilter) count++;
   if (state.projectFilters.length > 0 || state.includeNoProject) count++;
   if (state.labelFilters.length > 0) count++;
   if (state.dateFilter) count++;
@@ -139,7 +139,7 @@ function useIssueCounts(allIssues: Issue[]) {
     const priority = new Map<string, number>();
     const assignee = new Map<string, number>();
   const creator = new Map<string, number>();
-  const team = new Map<string, number>();
+  const space = new Map<string, number>();
   const project = new Map<string, number>();
     const label = new Map<string, number>();
     let noAssignee = 0;
@@ -159,8 +159,8 @@ function useIssueCounts(allIssues: Issue[]) {
       const cKey = `${issue.creator_type}:${issue.creator_id}`;
       creator.set(cKey, (creator.get(cKey) ?? 0) + 1);
 
-      if (issue.team_id) {
-        team.set(issue.team_id, (team.get(issue.team_id) ?? 0) + 1);
+      if (issue.space_id) {
+        space.set(issue.space_id, (space.get(issue.space_id) ?? 0) + 1);
       }
 
       if (!issue.project_id) {
@@ -176,7 +176,7 @@ function useIssueCounts(allIssues: Issue[]) {
       }
     }
 
-    return { status, priority, assignee, creator, noAssignee, team, project, noProject, label };
+    return { status, priority, assignee, creator, noAssignee, space, project, noProject, label };
   }, [allIssues]);
 }
 
@@ -359,26 +359,26 @@ function ActorSubContent({
 }
 
 // ---------------------------------------------------------------------------
-// Team sub-menu content
+// Space sub-menu content
 // ---------------------------------------------------------------------------
 
-function TeamSubContent({
+function SpaceSubContent({
   counts,
   selected,
   onSelect,
 }: {
   counts: Map<string, number>;
   selected: string | null;
-  onSelect: (teamId: string | null) => void;
+  onSelect: (spaceId: string | null) => void;
 }) {
   const { t } = useT("issues");
   const [search, setSearch] = useState("");
   const wsId = useWorkspaceId();
-  const { data: teams = [] } = useQuery(activeTeamListOptions(wsId));
+  const { data: spaces = [] } = useQuery(activeSpaceListOptions(wsId));
   const query = search.trim().toLowerCase();
-  const filtered = teams.filter((team) =>
-    team.name.toLowerCase().includes(query) ||
-    team.key.toLowerCase().includes(query),
+  const filtered = spaces.filter((space) =>
+    space.name.toLowerCase().includes(query) ||
+    space.key.toLowerCase().includes(query),
   );
 
   return (
@@ -395,7 +395,7 @@ function TeamSubContent({
       </div>
 
       <div className="max-h-64 overflow-y-auto p-1">
-        {(!query || "all teams".includes(query)) && (
+        {(!query || "all spaces".includes(query)) && (
           <DropdownMenuCheckboxItem
             checked={!selected}
             onCheckedChange={() => onSelect(null)}
@@ -403,25 +403,25 @@ function TeamSubContent({
           >
             <HoverCheck checked={!selected} />
             <Users className="size-3.5 text-muted-foreground" />
-            {t(($) => $.filters.all_teams)}
+            {t(($) => $.filters.all_spaces)}
           </DropdownMenuCheckboxItem>
         )}
 
-        {filtered.map((team) => {
-          const checked = selected === team.id;
-          const count = counts.get(team.id) ?? 0;
+        {filtered.map((space) => {
+          const checked = selected === space.id;
+          const count = counts.get(space.id) ?? 0;
           return (
             <DropdownMenuCheckboxItem
-              key={team.id}
+              key={space.id}
               checked={checked}
-              onCheckedChange={() => onSelect(checked ? null : team.id)}
+              onCheckedChange={() => onSelect(checked ? null : space.id)}
               className={FILTER_ITEM_CLASS}
             >
               <HoverCheck checked={checked} />
               <span className="inline-flex h-5 min-w-7 items-center justify-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
-                {team.key}
+                {space.key}
               </span>
-              <span className="truncate">{team.name}</span>
+              <span className="truncate">{space.name}</span>
               {count > 0 && (
                 <span className="ml-auto text-xs text-muted-foreground">
                   {count}
@@ -885,7 +885,7 @@ export function IssueDisplayControls({
   const assigneeFilters = useViewStore((s) => s.assigneeFilters);
   const includeNoAssignee = useViewStore((s) => s.includeNoAssignee);
   const creatorFilters = useViewStore((s) => s.creatorFilters);
-  const teamFilter = useViewStore((s) => s.teamFilter);
+  const spaceFilter = useViewStore((s) => s.spaceFilter);
   const projectFilters = useViewStore((s) => s.projectFilters);
   const includeNoProject = useViewStore((s) => s.includeNoProject);
   const labelFilters = useViewStore((s) => s.labelFilters);
@@ -906,7 +906,7 @@ export function IssueDisplayControls({
     assigneeFilters,
     includeNoAssignee,
     creatorFilters,
-    teamFilter,
+    spaceFilter,
     projectFilters,
     includeNoProject,
     labelFilters,
@@ -1141,20 +1141,20 @@ export function IssueDisplayControls({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            {/* Team */}
+            {/* Space */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <Users className="size-3.5" />
-                <span className="flex-1">{t(($) => $.filters.section_team)}</span>
-                {teamFilter && (
+                <span className="flex-1">{t(($) => $.filters.section_space)}</span>
+                {spaceFilter && (
                   <span className="text-xs text-primary font-medium">1</span>
                 )}
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-auto min-w-52 p-0">
-                <TeamSubContent
-                  counts={counts.team}
-                  selected={teamFilter}
-                  onSelect={act.setTeamFilter}
+                <SpaceSubContent
+                  counts={counts.space}
+                  selected={spaceFilter}
+                  onSelect={act.setSpaceFilter}
                 />
               </DropdownMenuSubContent>
             </DropdownMenuSub>

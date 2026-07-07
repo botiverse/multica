@@ -163,7 +163,7 @@ export const ProjectSchema = z.object({
   priority: z.string(),
   lead_type: z.string().nullable(),
   lead_id: z.string().nullable(),
-  team_ids: z.array(z.string()).default([]),
+  space_ids: z.array(z.string()).default([]),
   created_at: z.string(),
   updated_at: z.string(),
   issue_count: z.number().default(0),
@@ -197,7 +197,7 @@ export const EMPTY_PROJECT: Project = {
   priority: "none",
   lead_type: null,
   lead_id: null,
-  team_ids: [],
+  space_ids: [],
   created_at: "",
   updated_at: "",
   issue_count: 0,
@@ -555,7 +555,7 @@ export const EMPTY_MEMBER_LIST: MemberWithUser[] = [];
 
 const AgentInvocationTargetSchema: z.ZodType<AgentInvocationTarget> = z
   .object({
-    target_type: z.enum(["workspace", "member", "team"]).catch("team"),
+    target_type: z.enum(["workspace", "member", "space"]).catch("space"),
     target_id: z
       .string()
       .nullable()

@@ -16,7 +16,7 @@ export interface IssueSortParam {
   date_field?: ListIssuesParams["date_field"];
   date_start?: ListIssuesParams["date_start"];
   date_end?: ListIssuesParams["date_end"];
-  team_id?: ListIssuesParams["team_id"];
+  space_id?: ListIssuesParams["space_id"];
 }
 
 export const issueKeys = {
@@ -123,7 +123,7 @@ export type MyIssuesFilter = Pick<
   | "assignee_ids"
   | "assignee_types"
   | "creator_id"
-  | "team_id"
+  | "space_id"
   | "project_id"
   | "involves_user_id"
 >;
