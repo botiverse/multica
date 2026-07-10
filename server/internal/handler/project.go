@@ -150,6 +150,10 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		}
 		spaceFilter = id
 	}
+	spaceFilter, ok = h.taskTokenSpaceFilter(w, r, wsUUID, spaceFilter)
+	if !ok {
+		return
+	}
 	projects, err := h.Queries.ListProjects(r.Context(), db.ListProjectsParams{
 		WorkspaceID:  wsUUID,
 		ViewerUserID: parseUUID(requestUserID(r)),
@@ -598,6 +602,10 @@ type SearchProjectResponse struct {
 
 // buildProjectSearchQuery builds a dynamic SQL query for project search.
 func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) (string, []any) {
+	return buildProjectSearchQueryForSpace(phrase, terms, includeClosed, pgtype.UUID{})
+}
+
+func buildProjectSearchQueryForSpace(phrase string, terms []string, includeClosed bool, spaceID pgtype.UUID) (string, []any) {
 	phrase = strings.ToLower(phrase)
 	for i, t := range terms {
 		terms[i] = strings.ToLower(t)
@@ -654,6 +662,9 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 
 	if !includeClosed {
 		whereClause += " AND p.status NOT IN ('completed', 'cancelled')"
+	}
+	if spaceID.Valid {
+		whereClause += fmt.Sprintf(" AND p.space_id = %s::uuid", nextArg(spaceID))
 	}
 
 	// --- ORDER BY ranking ---
@@ -766,7 +777,11 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	terms := splitSearchTerms(q)
 
-	sqlQuery, args := buildProjectSearchQuery(q, terms, includeClosed)
+	spaceFilter, ok := h.taskTokenSpaceFilter(w, r, wsUUID, pgtype.UUID{})
+	if !ok {
+		return
+	}
+	sqlQuery, args := buildProjectSearchQueryForSpace(q, terms, includeClosed, spaceFilter)
 	args[1] = wsUUID
 	args[len(args)-3] = parseUUID(requestUserID(r))
 	args[len(args)-2] = limit

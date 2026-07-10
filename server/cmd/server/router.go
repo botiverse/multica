@@ -763,22 +763,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
 
 		// --- User-scoped routes (no workspace context required) ---
-		r.Get("/api/me", h.GetMe)
-		r.Patch("/api/me", h.UpdateMe)
-		r.Patch("/api/me/onboarding", h.PatchOnboarding)
-		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)
-		r.Post("/api/me/onboarding/cloud-waitlist", h.JoinCloudWaitlist)
+		r.With(handler.RequireHumanActor).Get("/api/me", h.GetMe)
+		r.With(handler.RequireHumanActor).Patch("/api/me", h.UpdateMe)
+		r.With(handler.RequireHumanActor).Patch("/api/me/onboarding", h.PatchOnboarding)
+		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/complete", h.CompleteOnboarding)
+		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/cloud-waitlist", h.JoinCloudWaitlist)
 		// DEPRECATED — shim routes for desktop < v3 during the rollout
 		// window. v3 frontend creates the Helper agent + starter issue
 		// via generic CreateAgent / CreateIssue and only calls /complete
 		// here. Remove once X-Client-Version telemetry confirms zero
 		// pre-v3 desktops are still calling these. Handlers live in
 		// server/internal/handler/onboarding_shim.go.
-		r.Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
-		r.Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
-		r.Post("/api/cli-token", h.IssueCliToken)
+		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
+		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
+		r.With(handler.RequireHumanActor).Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
-		r.Post("/api/feedback", h.CreateFeedback)
+		r.With(handler.RequireHumanActor).Post("/api/feedback", h.CreateFeedback)
 
 		// Note (MUL-4309): the generic OpenAI-compatible passthrough endpoints
 		// (POST /api/llm/v1/chat/completions[/stream]) were intentionally
@@ -801,6 +801,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/api/attachments/{id}/download", h.DownloadAttachment)
 
 		r.Route("/api/workspaces", func(r chi.Router) {
+			r.Use(handler.RequireHumanActor)
 			r.Get("/", h.ListWorkspaces)
 			r.Post("/", h.CreateWorkspace)
 			r.Route("/{id}", func(r chi.Router) {
@@ -902,13 +903,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// lark_user_binding row. Identity comes from the session;
 		// the token only proves "this open_id requested binding," and
 		// is combined with the logged-in user to create the mapping.
-		r.Post("/api/lark/binding/redeem", h.RedeemLarkBindingToken)
+		r.With(handler.RequireHumanActor).Post("/api/lark/binding/redeem", h.RedeemLarkBindingToken)
 		// Slack binding-token redemption. Same rationale as Lark: NOT
 		// workspace-scoped because the redeemer hits this before they have any
 		// workspace context — the redemption itself mints their binding row. The
 		// logged-in user (from the session) is bound to the Slack id the token
 		// carries.
-		r.Post("/api/slack/binding/redeem", h.RedeemSlackBindingToken)
+		r.With(handler.RequireHumanActor).Post("/api/slack/binding/redeem", h.RedeemSlackBindingToken)
 
 		// Composio integration (MUL-3720). User-scoped (no workspace context):
 		// a connection belongs to a user. These four require a logged-in
@@ -916,6 +917,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// group (registered above with the other public OAuth/webhook routes —
 		// see MUL-3843). All return 503 when COMPOSIO_API_KEY is unset.
 		r.Route("/api/integrations/composio", func(r chi.Router) {
+			r.Use(handler.RequireHumanActor)
 			r.Post("/connect/init", h.ComposioConnectInit)
 			r.Get("/toolkits", h.ListComposioToolkits)
 			r.Get("/connections", h.ListComposioConnections)
@@ -923,12 +925,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		})
 
 		// User-scoped invitation routes (no workspace context required)
-		r.Get("/api/invitations", h.ListMyInvitations)
-		r.Get("/api/invitations/{id}", h.GetMyInvitation)
-		r.Post("/api/invitations/{id}/accept", h.AcceptInvitation)
-		r.Post("/api/invitations/{id}/decline", h.DeclineInvitation)
+		r.With(handler.RequireHumanActor).Get("/api/invitations", h.ListMyInvitations)
+		r.With(handler.RequireHumanActor).Get("/api/invitations/{id}", h.GetMyInvitation)
+		r.With(handler.RequireHumanActor).Post("/api/invitations/{id}/accept", h.AcceptInvitation)
+		r.With(handler.RequireHumanActor).Post("/api/invitations/{id}/decline", h.DeclineInvitation)
 
 		r.Route("/api/tokens", func(r chi.Router) {
+			r.Use(handler.RequireHumanActor)
 			r.Get("/", h.ListPersonalAccessTokens)
 			r.Post("/", h.CreatePersonalAccessToken)
 			r.Post("/current/renew", h.RenewCurrentPersonalAccessToken)
@@ -977,7 +980,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Use(middleware.RequireWorkspaceMember(queries))
 
 			// Assignee frequency
-			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
+			r.With(handler.RequireHumanActor).Get("/api/assignee-frequency", h.GetAssigneeFrequency)
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {
@@ -1022,16 +1025,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 
 			// Task messages (user-facing, not daemon auth)
-			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			r.With(handler.RequireHumanActor).Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
 
 			// Labels
 			r.Route("/api/labels", func(r chi.Router) {
 				r.Get("/", h.ListLabels)
-				r.Post("/", h.CreateLabel)
+				r.With(handler.RequireHumanActor).Post("/", h.CreateLabel)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetLabel)
-					r.Put("/", h.UpdateLabel)
-					r.Delete("/", h.DeleteLabel)
+					r.With(handler.RequireHumanActor).Put("/", h.UpdateLabel)
+					r.With(handler.RequireHumanActor).Delete("/", h.DeleteLabel)
 				})
 			})
 
@@ -1054,19 +1057,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Spaces
 			r.Route("/api/spaces", func(r chi.Router) {
 				r.Get("/", h.ListSpaces)
-				r.Post("/", h.CreateSpace)
+				r.With(handler.RequireHumanActor).Post("/", h.CreateSpace)
 				r.Route("/{id}", func(r chi.Router) {
-					r.Patch("/", h.UpdateSpace)
-					r.Put("/", h.UpdateSpace)
-					r.Delete("/", h.ArchiveSpace)
-					r.Post("/join", h.JoinSpace)
+					r.With(handler.RequireHumanActor).Patch("/", h.UpdateSpace)
+					r.With(handler.RequireHumanActor).Put("/", h.UpdateSpace)
+					r.With(handler.RequireHumanActor).Delete("/", h.ArchiveSpace)
+					r.With(handler.RequireHumanActor).Post("/join", h.JoinSpace)
 					// Caller's own membership row.
-					r.Patch("/membership", h.UpdateSpaceMembership)
-					r.Delete("/membership", h.LeaveSpace)
-					r.Patch("/preferences", h.UpdateSpacePreference)
+					r.With(handler.RequireHumanActor).Patch("/membership", h.UpdateSpaceMembership)
+					r.With(handler.RequireHumanActor).Delete("/membership", h.LeaveSpace)
+					r.With(handler.RequireHumanActor).Patch("/preferences", h.UpdateSpacePreference)
 					r.Get("/members", h.ListSpaceMembers)
-					r.Put("/members", h.ReplaceSpaceMembers)
-					r.Patch("/members/{userId}", h.UpdateSpaceMemberRole)
+					r.With(handler.RequireHumanActor).Put("/members", h.ReplaceSpaceMembers)
+					r.With(handler.RequireHumanActor).Patch("/members/{userId}", h.UpdateSpaceMemberRole)
 				})
 			})
 
@@ -1092,35 +1095,36 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Autopilots
 			r.Route("/api/autopilots", func(r chi.Router) {
 				r.Get("/", h.ListAutopilots)
-				r.Post("/", h.CreateAutopilot)
+				r.With(handler.RequireHumanActor).Post("/", h.CreateAutopilot)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAutopilot)
-					r.Patch("/", h.UpdateAutopilot)
-					r.Delete("/", h.DeleteAutopilot)
-					r.Post("/trigger", h.TriggerAutopilot)
+					r.With(handler.RequireHumanActor).Patch("/", h.UpdateAutopilot)
+					r.With(handler.RequireHumanActor).Delete("/", h.DeleteAutopilot)
+					r.With(handler.RequireHumanActor).Post("/trigger", h.TriggerAutopilot)
 					r.Get("/runs", h.ListAutopilotRuns)
 					r.Get("/runs/{runId}", h.GetAutopilotRun)
 					r.Get("/deliveries", h.ListAutopilotDeliveries)
 					r.Get("/deliveries/{deliveryId}", h.GetAutopilotDelivery)
-					r.Post("/deliveries/{deliveryId}/replay", h.ReplayAutopilotDelivery)
-					r.Post("/triggers", h.CreateAutopilotTrigger)
+					r.With(handler.RequireHumanActor).Post("/deliveries/{deliveryId}/replay", h.ReplayAutopilotDelivery)
+					r.With(handler.RequireHumanActor).Post("/triggers", h.CreateAutopilotTrigger)
 					r.Route("/triggers/{triggerId}", func(r chi.Router) {
-						r.Patch("/", h.UpdateAutopilotTrigger)
-						r.Delete("/", h.DeleteAutopilotTrigger)
-						r.Post("/rotate-webhook-token", h.RotateAutopilotTriggerWebhookToken)
-						r.Put("/signing-secret", h.SetAutopilotTriggerSigningSecret)
+						r.With(handler.RequireHumanActor).Patch("/", h.UpdateAutopilotTrigger)
+						r.With(handler.RequireHumanActor).Delete("/", h.DeleteAutopilotTrigger)
+						r.With(handler.RequireHumanActor).Post("/rotate-webhook-token", h.RotateAutopilotTriggerWebhookToken)
+						r.With(handler.RequireHumanActor).Put("/signing-secret", h.SetAutopilotTriggerSigningSecret)
 					})
-					r.Post("/collaborators", h.AddAutopilotCollaborator)
-					r.Delete("/collaborators/{userId}", h.RemoveAutopilotCollaborator)
+					r.With(handler.RequireHumanActor).Post("/collaborators", h.AddAutopilotCollaborator)
+					r.With(handler.RequireHumanActor).Delete("/collaborators/{userId}", h.RemoveAutopilotCollaborator)
 				})
 			})
 
 			// Pins
 			r.Route("/api/pins", func(r chi.Router) {
+				r.Use(handler.RequireHumanActor)
 				r.Get("/", h.ListPins)
-				r.Post("/", h.CreatePin)
-				r.Put("/reorder", h.ReorderPins)
-				r.Delete("/{itemType}/{itemId}", h.DeletePin)
+				r.With(handler.RequireHumanActor).Post("/", h.CreatePin)
+				r.With(handler.RequireHumanActor).Put("/reorder", h.ReorderPins)
+				r.With(handler.RequireHumanActor).Delete("/{itemType}/{itemId}", h.DeletePin)
 			})
 
 			// Attachments
@@ -1146,19 +1150,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Agents
 			r.Route("/api/agents", func(r chi.Router) {
 				r.Get("/", h.ListAgents)
-				r.Post("/", h.CreateAgent)
+				r.With(handler.RequireHumanActor).Post("/", h.CreateAgent)
 				// Agent templates: pre-configured instructions + skill refs.
 				// Picking a template imports the referenced skills into the
 				// workspace (find-or-create by name) and creates the agent
 				// with the template's instructions in one transaction.
-				r.Post("/from-template", h.CreateAgentFromTemplate)
+				r.With(handler.RequireHumanActor).Post("/from-template", h.CreateAgentFromTemplate)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAgent)
-					r.Put("/", h.UpdateAgent)
-					r.Post("/archive", h.ArchiveAgent)
-					r.Post("/restore", h.RestoreAgent)
-					r.Post("/cancel-tasks", h.CancelAgentTasks)
-					r.Get("/tasks", h.ListAgentTasks)
+					r.With(handler.RequireHumanActor).Put("/", h.UpdateAgent)
+					r.With(handler.RequireHumanActor).Post("/archive", h.ArchiveAgent)
+					r.With(handler.RequireHumanActor).Post("/restore", h.RestoreAgent)
+					r.With(handler.RequireHumanActor).Post("/cancel-tasks", h.CancelAgentTasks)
+					r.With(handler.RequireHumanActor).Get("/tasks", h.ListAgentTasks)
 					r.With(handler.RequireHumanActor).Get("/skills", h.ListAgentSkills)
 					r.With(handler.RequireHumanActor).Put("/skills", h.SetAgentSkills)
 					r.With(handler.RequireHumanActor).Post("/skills/add", h.AddAgentSkills)
@@ -1180,6 +1184,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// lives under /api/agents/from-template above; this route is for
 			// the picker UI to list available templates.
 			r.Route("/api/agent-templates", func(r chi.Router) {
+				r.Use(handler.RequireHumanActor)
 				r.Get("/", h.ListAgentTemplates)
 				r.Get("/{slug}", h.GetAgentTemplate)
 			})
@@ -1212,6 +1217,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// "/{slug}/dashboard" page. Optional ?project_id filter scopes
 			// the rollup to a single project.
 			r.Route("/api/dashboard", func(r chi.Router) {
+				r.Use(handler.RequireHumanActor)
 				r.Get("/usage/daily", h.GetDashboardUsageDaily)
 				r.Get("/usage/by-agent", h.GetDashboardUsageByAgent)
 				r.Get("/agent-runtime", h.GetDashboardAgentRunTime)
@@ -1267,17 +1273,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Workspace-wide agent task snapshot for presence derivation:
 			// every active task + each agent's most recent terminal task.
-			r.Get("/api/agent-task-snapshot", h.ListWorkspaceAgentTaskSnapshot)
+			r.With(handler.RequireHumanActor).Get("/api/agent-task-snapshot", h.ListWorkspaceAgentTaskSnapshot)
 
 			// Workspace-wide daily agent activity (last 30d, anchored on
 			// completed_at). Backs the Agents-list sparkline (trailing 7d
 			// slice) AND the agent detail "Last 30 days" panel.
-			r.Get("/api/agent-activity-30d", h.GetWorkspaceAgentActivity30d)
+			r.With(handler.RequireHumanActor).Get("/api/agent-activity-30d", h.GetWorkspaceAgentActivity30d)
 
 			// Workspace-wide 30-day run counts per agent for the Agents-list RUNS column.
-			r.Get("/api/agent-run-counts", h.GetWorkspaceAgentRunCounts)
+			r.With(handler.RequireHumanActor).Get("/api/agent-run-counts", h.GetWorkspaceAgentRunCounts)
 
 			r.Route("/api/chat/sessions", func(r chi.Router) {
+				r.Use(handler.RequireHumanActor)
 				r.Post("/", h.CreateChatSession)
 				r.Get("/", h.ListChatSessions)
 				r.Route("/{sessionId}", func(r chi.Router) {
@@ -1293,13 +1300,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/read", h.MarkChatSessionRead)
 				})
 			})
-			r.Get("/api/chat/pending-tasks", h.ListPendingChatTasks)
-			r.Get("/api/chat/pending-tasks/has-any", h.HasPendingChatTasks)
+			r.With(handler.RequireHumanActor).Get("/api/chat/pending-tasks", h.ListPendingChatTasks)
+			r.With(handler.RequireHumanActor).Get("/api/chat/pending-tasks/has-any", h.HasPendingChatTasks)
 
 			// Quick-agent bar: per-user pinned agents for one-tap new chats.
-			r.Get("/api/chat/pinned-agents", h.ListChatPinnedAgents)
-			r.Post("/api/chat/pinned-agents", h.PinChatAgent)
-			r.Delete("/api/chat/pinned-agents/{agentId}", h.UnpinChatAgent)
+			r.With(handler.RequireHumanActor).Get("/api/chat/pinned-agents", h.ListChatPinnedAgents)
+			r.With(handler.RequireHumanActor).Post("/api/chat/pinned-agents", h.PinChatAgent)
+			r.With(handler.RequireHumanActor).Delete("/api/chat/pinned-agents/{agentId}", h.UnpinChatAgent)
 
 			// Agent-facing channel reads (MUL-3871). The caller's task-scoped token
 			// resolves to its own chat session; no session/channel id is passed, so
@@ -1311,6 +1318,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Inbox
 			r.Route("/api/inbox", func(r chi.Router) {
+				r.Use(handler.RequireHumanActor)
 				r.Get("/", h.ListInbox)
 				r.Get("/unread-count", h.CountUnreadInbox)
 				// Cross-workspace unread summary: account-level, keyed on the
@@ -1326,6 +1334,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Notification preferences
 			r.Route("/api/notification-preferences", func(r chi.Router) {
+				r.Use(handler.RequireHumanActor)
 				r.Get("/", h.GetNotificationPreferences)
 				r.Put("/", h.UpdateNotificationPreferences)
 			})
