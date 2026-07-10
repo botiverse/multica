@@ -164,7 +164,7 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 				ID:          issue.AssigneeID,
 				WorkspaceID: issue.WorkspaceID,
 			})
-			if err != nil {
+			if err != nil || squad.SpaceID != issue.SpaceID {
 				writeError(w, http.StatusBadRequest, "issue squad is unavailable")
 				return
 			}

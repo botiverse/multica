@@ -68,7 +68,7 @@ export type {
 } from "./agent";
 export { RUNTIME_PROFILE_PROTOCOL_FAMILIES } from "./agent";
 export type { Workspace, WorkspaceRepo, Member, MemberRole, User, MemberWithUser, Invitation } from "./workspace";
-export type { Space, CreateSpaceRequest, UpdateSpaceRequest, ListSpacesResponse, SpaceMembership, SpacePreference, UpdateSpacePreferenceRequest, SpaceMemberRoleUpdate, SpaceMember, ListSpaceMembersResponse } from "./space";
+export type { Space, CreateSpaceRequest, UpdateSpaceRequest, ListSpacesResponse, RestoreSpaceResponse, ResumeSpaceAutopilotsResponse, SpaceMembership, SpacePreference, UpdateSpacePreferenceRequest, SpaceMemberRoleUpdate, SpaceMember, ListSpaceMembersResponse } from "./space";
 export type { InboxItem, InboxSeverity, InboxItemType, InboxWorkspaceUnread } from "./inbox";
 export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences, NotificationPreferenceResponse } from "./notification-preference";
 export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, CommentTriggerSource, Reaction } from "./comment";
@@ -142,6 +142,10 @@ export type {
   RedeemSlackBindingTokenResponse,
 } from "./slack";
 export type {
+  IntegrationConnectionBinding,
+  ListIntegrationBindingsResponse,
+} from "./integration-binding";
+export type {
   Autopilot,
   AutopilotStatus,
   AutopilotExecutionMode,
@@ -152,6 +156,9 @@ export type {
   AutopilotCollaboratorsResponse,
   AutopilotTrigger,
   AutopilotTriggerKind,
+  AutopilotTemplate,
+  SaveAutopilotTemplateRequest,
+  ListAutopilotTemplatesResponse,
   AutopilotRun,
   AutopilotRunStatus,
   AutopilotRunSource,
