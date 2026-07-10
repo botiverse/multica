@@ -139,6 +139,7 @@ vi.mock("@multica/core/paths", () => ({
     skills: () => "/acme/skills",
     settings: () => "/acme/settings",
     spaceNew: () => "/acme/spaces/new",
+    spacesDirectory: () => "/acme/spaces",
     spaceDetail: (key: string) => `/acme/space/${key}`,
     spaceIssues: (key: string) => `/acme/space/${key}/issues`,
     spaceProjects: (key: string) => `/acme/space/${key}/projects`,
@@ -179,7 +180,9 @@ vi.mock("@multica/core/modals", () => ({ useModalStore: { getState: () => ({ mod
 vi.mock("@multica/core/pins/mutations", () => ({ useDeletePin: () => ({ mutate: deletePin }), useReorderPins: () => ({ mutate: vi.fn() }) }));
 vi.mock("@multica/core/pins/queries", () => ({ pinListOptions: () => ({ queryKey: ["pins"] }) }));
 vi.mock("@multica/core/spaces/queries", () => ({ mySpaceListOptions: () => ({ queryKey: ["spaces"] }) }));
-vi.mock("@multica/core/spaces/mutations", () => ({ useUpdateSpaceMembership: () => ({ mutate: vi.fn() }) }));
+vi.mock("@multica/core/spaces/mutations", () => ({
+  useUpdateSpacePreference: () => ({ mutate: vi.fn() }),
+}));
 vi.mock("@multica/core/projects/queries", () => ({ projectDetailOptions: () => ({ queryKey: ["project"] }) }));
 vi.mock("@multica/core/workspace/queries", () => ({
   myInvitationListOptions: () => ({ queryKey: ["invitations"] }),
@@ -273,6 +276,8 @@ describe("project navigation", () => {
         updated_at: "2026-05-06T00:00:00Z",
         is_member: true,
         member_role: "lead",
+        is_pinned: false,
+        is_followed: false,
         sort_order: 1,
       },
     ];

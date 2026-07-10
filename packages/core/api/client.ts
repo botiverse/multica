@@ -78,6 +78,8 @@ import type {
   CancelTaskResponse,
   Space,
   SpaceMembership,
+  SpacePreference,
+  UpdateSpacePreferenceRequest,
   SpaceMemberRoleUpdate,
   ListSpaceMembersResponse,
   CreateSpaceRequest,
@@ -208,6 +210,7 @@ import {
   EMPTY_LIST_SPACE_MEMBERS_RESPONSE,
   SpaceSchema,
   SpaceMembershipSchema,
+  SpacePreferenceSchema,
   SpaceMemberRoleUpdateSchema,
   ListWebhookDeliveriesResponseSchema,
   RuntimeHourlyActivityListSchema,
@@ -1666,6 +1669,16 @@ export class ApiClient {
       body: JSON.stringify(data),
     });
     return parseOrWarn(raw, SpaceMembershipSchema, { endpoint: "PATCH /api/spaces/:id/membership" });
+  }
+
+  async updateSpacePreference(id: string, data: UpdateSpacePreferenceRequest): Promise<SpacePreference> {
+    const raw = await this.fetch<unknown>(`/api/spaces/${id}/preferences`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    return parseOrWarn(raw, SpacePreferenceSchema, {
+      endpoint: "PATCH /api/spaces/:id/preferences",
+    });
   }
 
   async joinSpace(id: string): Promise<Space> {
