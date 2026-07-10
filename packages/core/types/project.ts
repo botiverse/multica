@@ -5,6 +5,7 @@ export type ProjectPriority = "urgent" | "high" | "medium" | "low" | "none";
 export interface Project {
   id: string;
   workspace_id: string;
+  space_id: string;
   title: string;
   description: string | null;
   icon: string | null;
@@ -17,7 +18,6 @@ export interface Project {
   issue_count: number;
   done_count: number;
   resource_count: number;
-  space_ids?: string[];
 }
 
 export interface CreateProjectRequest {
@@ -28,7 +28,7 @@ export interface CreateProjectRequest {
   priority?: ProjectPriority;
   lead_type?: "member" | "agent";
   lead_id?: string;
-  space_ids?: string[];
+  space_id?: string;
   // Resources to attach in the same transaction as the project. Server returns
   // 4xx (and rolls back) if any one is invalid or duplicate.
   resources?: CreateProjectResourceRequest[];
@@ -42,7 +42,9 @@ export interface UpdateProjectRequest {
   priority?: ProjectPriority;
   lead_type?: "member" | "agent" | null;
   lead_id?: string | null;
-  space_ids?: string[];
+  // Project moves require a dedicated impact-aware workflow and are not a
+  // generic metadata update.
+  space_id?: never;
 }
 
 export interface ListProjectsResponse {

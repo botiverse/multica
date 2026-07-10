@@ -2257,7 +2257,9 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	// workspace's repos list.
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+		INSERT INTO project (workspace_id, space_id, title)
+		VALUES ($1, (SELECT id FROM workspace_space WHERE workspace_id = $1 LIMIT 1), $2)
+		RETURNING id
 	`, testWorkspaceID, "Claim project repo override").Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -2359,7 +2361,9 @@ func TestClaimTask_ProjectDescriptionInjected(t *testing.T) {
 	const projectDescription = "Always write copy in British English. Ship behind a feature flag."
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title, description) VALUES ($1, $2, $3) RETURNING id
+		INSERT INTO project (workspace_id, space_id, title, description)
+		VALUES ($1, (SELECT id FROM workspace_space WHERE workspace_id = $1 LIMIT 1), $2, $3)
+		RETURNING id
 	`, testWorkspaceID, "Claim project description", projectDescription).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -2437,7 +2441,9 @@ func TestClaimTask_QuickCreateInjectsProjectDescription(t *testing.T) {
 	const projectDescription = "Use the design system tokens; never hardcode colors."
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title, description) VALUES ($1, $2, $3) RETURNING id
+		INSERT INTO project (workspace_id, space_id, title, description)
+		VALUES ($1, (SELECT id FROM workspace_space WHERE workspace_id = $1 LIMIT 1), $2, $3)
+		RETURNING id
 	`, testWorkspaceID, "Quick-create project description", projectDescription).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -2481,7 +2487,9 @@ func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {
 
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+		INSERT INTO project (workspace_id, space_id, title)
+		VALUES ($1, (SELECT id FROM workspace_space WHERE workspace_id = $1 LIMIT 1), $2)
+		RETURNING id
 	`, testWorkspaceID, "Claim project without repos").Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}

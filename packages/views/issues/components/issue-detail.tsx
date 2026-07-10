@@ -1555,6 +1555,7 @@ function IssueDetailInner({ issueId, onDelete, onDone, defaultSidebarOpen = true
             <ProjectPicker
               projectId={issue.project_id}
               onUpdate={handleUpdateField}
+              spaceId={issue.space_id}
             />
           </PropRow>
 

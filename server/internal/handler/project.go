@@ -20,20 +20,20 @@ import (
 )
 
 type ProjectResponse struct {
-	ID          string   `json:"id"`
-	WorkspaceID string   `json:"workspace_id"`
-	Title       string   `json:"title"`
-	Description *string  `json:"description"`
-	Icon        *string  `json:"icon"`
-	Status      string   `json:"status"`
-	Priority    string   `json:"priority"`
-	LeadType    *string  `json:"lead_type"`
-	LeadID      *string  `json:"lead_id"`
-	SpaceIDs    []string `json:"space_ids"`
-	CreatedAt   string   `json:"created_at"`
-	UpdatedAt   string   `json:"updated_at"`
-	IssueCount  int64    `json:"issue_count"`
-	DoneCount   int64    `json:"done_count"`
+	ID          string  `json:"id"`
+	WorkspaceID string  `json:"workspace_id"`
+	SpaceID     string  `json:"space_id"`
+	Title       string  `json:"title"`
+	Description *string `json:"description"`
+	Icon        *string `json:"icon"`
+	Status      string  `json:"status"`
+	Priority    string  `json:"priority"`
+	LeadType    *string `json:"lead_type"`
+	LeadID      *string `json:"lead_id"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
+	IssueCount  int64   `json:"issue_count"`
+	DoneCount   int64   `json:"done_count"`
 	// ResourceCount is a breadcrumb pointing at the sub-collection at
 	// /api/projects/{id}/resources. Resources themselves stay out of this
 	// payload to keep parent metadata and child collections separate; clients
@@ -45,6 +45,7 @@ func projectToResponse(p db.Project) ProjectResponse {
 	return ProjectResponse{
 		ID:          uuidToString(p.ID),
 		WorkspaceID: uuidToString(p.WorkspaceID),
+		SpaceID:     uuidToString(p.SpaceID),
 		Title:       p.Title,
 		Description: textToPtr(p.Description),
 		Icon:        textToPtr(p.Icon),
@@ -52,11 +53,8 @@ func projectToResponse(p db.Project) ProjectResponse {
 		Priority:    p.Priority,
 		LeadType:    textToPtr(p.LeadType),
 		LeadID:      uuidToPtr(p.LeadID),
-		// Always a non-nil slice so no endpoint can serialize space_ids as null;
-		// the frontend zod schema rejects null and would blank the surface.
-		SpaceIDs:  []string{},
-		CreatedAt: timestampToString(p.CreatedAt),
-		UpdatedAt: timestampToString(p.UpdatedAt),
+		CreatedAt:   timestampToString(p.CreatedAt),
+		UpdatedAt:   timestampToString(p.UpdatedAt),
 	}
 }
 
@@ -76,58 +74,25 @@ func (h *Handler) loadProjectResourceCount(ctx context.Context, projectID pgtype
 	return rows[0].ResourceCount
 }
 
-// attachProjectSpaces loads the space links for a single project. Callers pass the
-// pgtype.UUIDs they already hold (from the sqlc row) instead of re-parsing the
-// string form on the response. The error is returned rather than swallowed so
-// callers can log it — a silent failure here serializes space_ids as [] and
-// blanks the project's space affiliation in the UI.
-func (h *Handler) attachProjectSpaces(ctx context.Context, resp *ProjectResponse, workspaceID, projectID pgtype.UUID) error {
-	spaces, err := h.Queries.ListProjectSpaces(ctx, db.ListProjectSpacesParams{
-		WorkspaceID: workspaceID,
-		ProjectID:   projectID,
-	})
-	if err != nil {
-		return err
-	}
-	resp.SpaceIDs = make([]string, len(spaces))
-	for i, space := range spaces {
-		resp.SpaceIDs[i] = uuidToString(space.ID)
-	}
-	return nil
-}
-
-func (h *Handler) resolveProjectSpaceIDs(ctx context.Context, workspaceID pgtype.UUID, raw []string) ([]pgtype.UUID, bool, string) {
-	if len(raw) == 0 {
+func (h *Handler) resolveProjectSpaceID(ctx context.Context, workspaceID pgtype.UUID, raw string) (pgtype.UUID, bool, string) {
+	if strings.TrimSpace(raw) == "" {
 		space, err := h.Queries.GetDefaultWorkspaceSpace(ctx, workspaceID)
 		if err != nil || !space.ID.Valid {
-			return nil, false, spaceNotFoundMessage
+			return pgtype.UUID{}, false, spaceNotFoundMessage
 		}
 		if space.ArchivedAt.Valid {
-			return nil, false, spaceArchivedMessage
+			return pgtype.UUID{}, false, spaceArchivedMessage
 		}
-		return []pgtype.UUID{space.ID}, true, ""
+		return space.ID, true, ""
 	}
-	ids := make([]pgtype.UUID, 0, len(raw))
-	seen := map[string]struct{}{}
-	for _, value := range raw {
-		id, err := parseStrictUUID(strings.TrimSpace(value))
-		if err != nil {
-			return nil, false, "invalid space_id"
-		}
-		key := uuidToString(id)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		if _, err := service.ValidateActiveSpace(ctx, h.Queries, workspaceID, id); err != nil {
-			return nil, false, spaceResolveMessage(err)
-		}
-		ids = append(ids, id)
+	id, err := parseStrictUUID(strings.TrimSpace(raw))
+	if err != nil {
+		return pgtype.UUID{}, false, "invalid space_id"
 	}
-	if len(ids) == 0 {
-		return nil, false, "space_ids must not be empty"
+	if _, err := service.ValidateActiveSpace(ctx, h.Queries, workspaceID, id); err != nil {
+		return pgtype.UUID{}, false, spaceResolveMessage(err)
 	}
-	return ids, true, ""
+	return id, true, ""
 }
 
 type CreateProjectRequest struct {
@@ -139,7 +104,7 @@ type CreateProjectRequest struct {
 	LeadType    *string                               `json:"lead_type"`
 	LeadID      *string                               `json:"lead_id"`
 	Resources   []CreateProjectResourceRequestPayload `json:"resources,omitempty"`
-	SpaceIDs    []string                              `json:"space_ids,omitempty"`
+	SpaceID     string                                `json:"space_id,omitempty"`
 }
 
 // CreateProjectResourceRequestPayload mirrors CreateProjectResourceRequest but
@@ -153,14 +118,14 @@ type CreateProjectResourceRequestPayload struct {
 }
 
 type UpdateProjectRequest struct {
-	Title       *string  `json:"title"`
-	Description *string  `json:"description"`
-	Icon        *string  `json:"icon"`
-	Status      *string  `json:"status"`
-	Priority    *string  `json:"priority"`
-	LeadType    *string  `json:"lead_type"`
-	LeadID      *string  `json:"lead_id"`
-	SpaceIDs    []string `json:"space_ids"`
+	Title       *string `json:"title"`
+	Description *string `json:"description"`
+	Icon        *string `json:"icon"`
+	Status      *string `json:"status"`
+	Priority    *string `json:"priority"`
+	LeadType    *string `json:"lead_type"`
+	LeadID      *string `json:"lead_id"`
+	SpaceID     *string `json:"space_id"`
 }
 
 func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
@@ -196,12 +161,11 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Batch-fetch issue stats, resource counts, and space links for all projects
-	// in one query each — same shape as loadProjectIssueStats batching — so the
+	// Batch-fetch issue stats and resource counts for all projects in one query
+	// each — same shape as loadProjectIssueStats batching — so the
 	// list endpoint never N+1s per project row.
 	statsMap := make(map[string]db.GetProjectIssueStatsRow)
 	resourceCountMap := make(map[string]int64)
-	spaceIDsMap := make(map[string][]string)
 	if len(projects) > 0 {
 		projectIDs := make([]pgtype.UUID, len(projects))
 		for i, p := range projects {
@@ -219,18 +183,6 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 				resourceCountMap[uuidToString(c.ProjectID)] = c.ResourceCount
 			}
 		}
-		spaceRows, err := h.Queries.ListProjectSpacesByProjects(r.Context(), db.ListProjectSpacesByProjectsParams{
-			WorkspaceID: wsUUID,
-			ProjectIds:  projectIDs,
-		})
-		if err != nil {
-			slog.Error("failed to batch-load project spaces", append(logger.RequestAttrs(r), "error", err)...)
-		} else {
-			for _, tr := range spaceRows {
-				pid := uuidToString(tr.ProjectID)
-				spaceIDsMap[pid] = append(spaceIDsMap[pid], uuidToString(tr.ID))
-			}
-		}
 	}
 
 	resp := make([]ProjectResponse, len(projects))
@@ -241,9 +193,6 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 			resp[i].DoneCount = s.DoneCount
 		}
 		resp[i].ResourceCount = resourceCountMap[resp[i].ID]
-		if spaces, ok := spaceIDsMap[resp[i].ID]; ok {
-			resp[i].SpaceIDs = spaces
-		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": resp, "total": len(resp)})
 }
@@ -269,9 +218,6 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	resp := projectToResponse(project)
 	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
-	if err := h.attachProjectSpaces(r.Context(), &resp, project.WorkspaceID, project.ID); err != nil {
-		slog.Error("failed to attach project spaces", append(logger.RequestAttrs(r), "error", err, "project_id", uuidToString(project.ID))...)
-	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -355,6 +301,11 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	spaceID, ok, msg := h.resolveProjectSpaceID(r.Context(), wsUUID, req.SpaceID)
+	if !ok {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
 
 	// Pre-validate every resource payload before opening a transaction so an
 	// invalid ref produces a clean 400 with no DB work. For local_directory we
@@ -394,6 +345,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 
 	createParams := db.CreateProjectParams{
 		WorkspaceID: wsUUID,
+		SpaceID:     spaceID,
 		Title:       req.Title,
 		Description: ptrToText(req.Description),
 		Icon:        ptrToText(req.Icon),
@@ -403,13 +355,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		Priority:    priority,
 	}
 
-	spaceIDs, ok, msg := h.resolveProjectSpaceIDs(r.Context(), wsUUID, req.SpaceIDs)
-	if !ok {
-		writeError(w, http.StatusBadRequest, msg)
-		return
-	}
-
-	// Transactional path: project + space links + all resources are atomic.
+	// Transactional path: project + all resources are atomic.
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
@@ -423,17 +369,6 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		h.writeProjectWriteError(w, r, err, "create")
 		return
 	}
-	for _, spaceID := range spaceIDs {
-		if err := qtx.AddProjectSpace(r.Context(), db.AddProjectSpaceParams{
-			WorkspaceID: wsUUID,
-			ProjectID:   project.ID,
-			SpaceID:     spaceID,
-		}); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to attach project space")
-			return
-		}
-	}
-
 	creator, _ := h.parseUserUUIDOrZero(userID)
 	resourceRows := make([]db.ProjectResource, 0, len(req.Resources))
 	for i, res := range req.Resources {
@@ -474,9 +409,6 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		resourceResp[i] = projectResourceToResponse(row)
 	}
 	resp := projectToResponse(project)
-	if err := h.attachProjectSpaces(r.Context(), &resp, project.WorkspaceID, project.ID); err != nil {
-		slog.Error("failed to attach project spaces", append(logger.RequestAttrs(r), "error", err, "project_id", uuidToString(project.ID))...)
-	}
 	resp.ResourceCount = int64(len(resourceResp))
 	h.publish(protocol.EventProjectCreated, workspaceID, "member", userID, map[string]any{"project": resp})
 	for _, rr := range resourceResp {
@@ -586,65 +518,23 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 			params.LeadID = pgtype.UUID{Valid: false}
 		}
 	}
-	var (
-		replaceSpaces bool
-		nextSpaceIDs  []pgtype.UUID
-	)
-	if _, ok := rawFields["space_ids"]; ok {
-		replaceSpaces = true
-		// A project keeps at least one space — an unanchored project would
-		// vanish from every space's Projects page. This is the ONLY
-		// project↔space guard; an issue's space is never validated against the
-		// project's set.
-		if len(req.SpaceIDs) == 0 {
-			writeError(w, http.StatusBadRequest, "space_ids must not be empty")
-			return
-		}
-		var msg string
-		var valid bool
-		nextSpaceIDs, valid, msg = h.resolveProjectSpaceIDs(r.Context(), wsUUID, req.SpaceIDs)
-		if !valid {
-			writeError(w, http.StatusBadRequest, msg)
-			return
-		}
-	}
-
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+	if _, legacy := rawFields["space_ids"]; legacy {
+		writeError(w, http.StatusBadRequest, "space_ids is no longer supported; a Project belongs to one Space")
 		return
 	}
-	defer tx.Rollback(r.Context())
-	qtx := h.Queries.WithTx(tx)
+	if _, touched := rawFields["space_id"]; touched {
+		writeError(w, http.StatusConflict, "Project Space cannot be changed here; use Move Project")
+		return
+	}
 
-	// Removing a space association is unguarded by design: the project↔space
-	// link is a creation-time default, not an invariant. Issues keep their
-	// project, and autopilots carry their own space_id independently.
-	project, err := qtx.UpdateProject(r.Context(), params)
+	project, err := h.Queries.UpdateProject(r.Context(), params)
 	if err != nil {
 		h.writeProjectWriteError(w, r, err, "update")
-		return
-	}
-	if replaceSpaces {
-		if err := qtx.ReplaceProjectSpaces(r.Context(), db.ReplaceProjectSpacesParams{
-			WorkspaceID: wsUUID,
-			ProjectID:   project.ID,
-			SpaceIds:    nextSpaceIDs,
-		}); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update project spaces")
-			return
-		}
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit project update")
 		return
 	}
 	resp := projectToResponse(project)
 	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
-	if err := h.attachProjectSpaces(r.Context(), &resp, project.WorkspaceID, project.ID); err != nil {
-		slog.Error("failed to attach project spaces", append(logger.RequestAttrs(r), "error", err, "project_id", uuidToString(project.ID))...)
-	}
 	h.publish(protocol.EventProjectUpdated, workspaceID, "member", userID, map[string]any{"project": resp})
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -799,7 +689,7 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	limitParam := nextArg(nil)
 	offsetParam := nextArg(nil)
 
-	query := fmt.Sprintf(`SELECT p.id, p.workspace_id, p.title, p.description, p.icon,
+	query := fmt.Sprintf(`SELECT p.id, p.workspace_id, p.space_id, p.title, p.description, p.icon,
 		p.status, p.priority, p.lead_type, p.lead_id,
 		p.created_at, p.updated_at,
 		COUNT(*) OVER() AS total_count,
@@ -871,6 +761,7 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 			if err := rows.Scan(
 				&row.project.ID,
 				&row.project.WorkspaceID,
+				&row.project.SpaceID,
 				&row.project.Title,
 				&row.project.Description,
 				&row.project.Icon,
@@ -910,13 +801,9 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 		total = results[0].totalCount
 	}
 
-	// Batch-fetch issue stats, resource counts, and space links. Search is the
-	// only project endpoint that previously never attached spaces, so it
-	// serialized space_ids as [] for every hit; without the space links the
-	// frontend cannot render project space affiliation for search results.
+	// Batch-fetch issue stats and resource counts for the search results.
 	statsMap := make(map[string]db.GetProjectIssueStatsRow)
 	resourceCountMap := make(map[string]int64)
-	spaceIDsMap := make(map[string][]string)
 	if len(results) > 0 {
 		projectIDs := make([]pgtype.UUID, len(results))
 		for i, r := range results {
@@ -934,18 +821,6 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 				resourceCountMap[uuidToString(c.ProjectID)] = c.ResourceCount
 			}
 		}
-		spaceRows, err := h.Queries.ListProjectSpacesByProjects(ctx, db.ListProjectSpacesByProjectsParams{
-			WorkspaceID: wsUUID,
-			ProjectIds:  projectIDs,
-		})
-		if err != nil {
-			slog.Error("failed to batch-load project spaces", append(logger.RequestAttrs(r), "error", err)...)
-		} else {
-			for _, tr := range spaceRows {
-				pid := uuidToString(tr.ProjectID)
-				spaceIDsMap[pid] = append(spaceIDsMap[pid], uuidToString(tr.ID))
-			}
-		}
 	}
 
 	resp := make([]SearchProjectResponse, len(results))
@@ -956,9 +831,6 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 			pr.DoneCount = s.DoneCount
 		}
 		pr.ResourceCount = resourceCountMap[pr.ID]
-		if spaces, ok := spaceIDsMap[pr.ID]; ok {
-			pr.SpaceIDs = spaces
-		}
 		spr := SearchProjectResponse{
 			ProjectResponse: pr,
 			MatchSource:     row.matchSource,

@@ -25,7 +25,7 @@ import { useNavigation } from "../../navigation";
 import { TitleEditor, ContentEditor, type ContentEditorRef } from "../../editor";
 import { PriorityIcon } from "../../issues/components/priority-icon";
 import { ProjectResourcesSection } from "./project-resources-section";
-import { SpaceMultiPicker } from "../../spaces/components/space-picker";
+import { SpacePicker } from "../../spaces/components/space-picker";
 import { IssueSurface } from "../../issues/surface/issue-surface";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
@@ -206,20 +206,6 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     },
     [project, updateProject],
   );
-
-  // Inline space edits commit immediately.
-  const handleSpacesChange = async (nextIds: string[]) => {
-    if (!project) return;
-    if (nextIds.length === 0) {
-      toast.error(t(($) => $.manage_spaces.empty));
-      return;
-    }
-    try {
-      await updateProject.mutateAsync({ id: project.id, space_ids: nextIds });
-    } catch {
-      toast.error(t(($) => $.manage_spaces.toast_failed));
-    }
-  };
 
   const handleDelete = useCallback(() => {
     if (!project) return;
@@ -414,9 +400,10 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             </Popover>
           </PropRow>
           <PropRow label={t(($) => $.detail.spaces)}>
-            <SpaceMultiPicker
-              spaceIds={project.space_ids ?? []}
-              onChange={handleSpacesChange}
+            <SpacePicker
+              spaceId={project.space_id}
+              onChange={() => {}}
+              disabled
               triggerRender={
                 <button
                   type="button"

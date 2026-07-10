@@ -136,7 +136,7 @@ func init() {
 	projectCreateCmd.Flags().String("status", "", "Project status")
 	projectCreateCmd.Flags().String("icon", "", "Project icon (emoji)")
 	projectCreateCmd.Flags().String("lead", "", "Lead name (member or agent)")
-	projectCreateCmd.Flags().StringArray("space", nil, "Space UUID or key (may be repeated)")
+	projectCreateCmd.Flags().String("space", "", "Owning Space UUID or key")
 	projectCreateCmd.Flags().StringArray("repo", nil, "Attach a github_repo resource by URL (may be repeated)")
 	projectCreateCmd.Flags().String("output", "json", "Output format: table or json")
 
@@ -180,7 +180,6 @@ func init() {
 	projectUpdateCmd.Flags().String("status", "", "New status")
 	projectUpdateCmd.Flags().String("icon", "", "New icon (emoji)")
 	projectUpdateCmd.Flags().String("lead", "", "New lead name (member or agent)")
-	projectUpdateCmd.Flags().StringArray("space", nil, "Replace project Spaces with these UUIDs or keys (may be repeated)")
 	projectUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// project delete
@@ -342,14 +341,12 @@ func runProjectCreate(cmd *cobra.Command, _ []string) error {
 		body["lead_type"] = aType
 		body["lead_id"] = aID
 	}
-	if spaceRefs, _ := cmd.Flags().GetStringArray("space"); len(spaceRefs) > 0 {
-		spaceIDs, err := resolveSpaceRefs(ctx, client, spaceRefs)
+	if spaceRef, _ := cmd.Flags().GetString("space"); spaceRef != "" {
+		spaceID, err := resolveSpaceRef(ctx, client, spaceRef)
 		if err != nil {
 			return fmt.Errorf("resolve space: %w", err)
 		}
-		if len(spaceIDs) > 0 {
-			body["space_ids"] = spaceIDs
-		}
+		body["space_id"] = spaceID
 	}
 
 	// Bundle resources into the create payload so the server attaches them in
@@ -436,17 +433,8 @@ func runProjectUpdate(cmd *cobra.Command, args []string) error {
 		body["lead_type"] = aType
 		body["lead_id"] = aID
 	}
-	if cmd.Flags().Changed("space") {
-		spaceRefs, _ := cmd.Flags().GetStringArray("space")
-		spaceIDs, err := resolveSpaceRefs(ctx, client, spaceRefs)
-		if err != nil {
-			return fmt.Errorf("resolve space: %w", err)
-		}
-		body["space_ids"] = spaceIDs
-	}
-
 	if len(body) == 0 {
-		return fmt.Errorf("no fields to update; use flags like --title, --status, --description, --icon, --lead, --space")
+		return fmt.Errorf("no fields to update; use flags like --title, --status, --description, --icon, --lead")
 	}
 
 	var result map[string]any
