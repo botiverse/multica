@@ -398,9 +398,10 @@ func (h *Handler) ListAutopilots(w http.ResponseWriter, r *http.Request) {
 	}
 
 	autopilots, err := h.Queries.ListAutopilots(r.Context(), db.ListAutopilotsParams{
-		WorkspaceID: parseUUID(workspaceID),
-		SpaceID:     spaceFilter,
-		Status:      statusFilter,
+		WorkspaceID:  parseUUID(workspaceID),
+		ViewerUserID: parseUUID(requestUserID(r)),
+		SpaceID:      spaceFilter,
+		Status:       statusFilter,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list autopilots")
@@ -528,6 +529,13 @@ func (h *Handler) loadAutopilotInWorkspace(w http.ResponseWriter, r *http.Reques
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "autopilot not found")
+		return db.Autopilot{}, false
+	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		if !h.requireSpaceView(w, r, wsUUID, autopilot.SpaceID) {
+			return db.Autopilot{}, false
+		}
+	} else if !h.requireSpaceCollaboration(w, r, wsUUID, autopilot.SpaceID) {
 		return db.Autopilot{}, false
 	}
 	return autopilot, true
@@ -658,6 +666,9 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 	}
 	spaceID, ok := h.resolveAutopilotSpace(w, r, wsUUID, req.SpaceID, projectID, pgtype.UUID{})
 	if !ok {
+		return
+	}
+	if !h.requireSpaceCollaboration(w, r, wsUUID, spaceID) {
 		return
 	}
 
@@ -1018,6 +1029,9 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "autopilot not found")
 		return
 	}
+	if !h.requireSpaceCollaboration(w, r, wsUUID, ap.SpaceID) {
+		return
+	}
 	if !h.requireAutopilotWrite(w, r, ap, workspaceID) {
 		return
 	}
@@ -1035,7 +1049,10 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.publish(protocol.EventAutopilotDeleted, workspaceID, "member", userID, map[string]any{"autopilot_id": uuidToString(idUUID)})
+	h.publish(protocol.EventAutopilotDeleted, workspaceID, "member", userID, map[string]any{
+		"autopilot_id": uuidToString(idUUID),
+		"space_id":     uuidToString(ap.SpaceID),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
