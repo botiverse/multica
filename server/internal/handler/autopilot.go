@@ -657,9 +657,6 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "assignee_type must be agent or squad")
 		return
 	}
-	if !h.validateAutopilotAssignee(w, r, assigneeType, assigneeUUID, wsUUID) {
-		return
-	}
 	projectID, ok := h.parseAutopilotProjectID(w, r, req.ProjectID, wsUUID)
 	if !ok {
 		return
@@ -669,6 +666,9 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.requireSpaceCollaboration(w, r, wsUUID, spaceID) {
+		return
+	}
+	if !h.validateAutopilotAssignee(w, r, assigneeType, assigneeUUID, wsUUID, spaceID) {
 		return
 	}
 
@@ -853,6 +853,11 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if _, spaceTouched := rawFields["space_id"]; spaceTouched {
+		if !h.requireSpaceCollaboration(w, r, prev.WorkspaceID, params.SpaceID) {
+			return
+		}
+	}
 	// assignee_type and assignee_id are validated as a pair: switching
 	// between agent and squad without supplying a new id would leave the
 	// row pointing at the wrong table. The client is expected to send both
@@ -860,8 +865,9 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 	// rejected.
 	_, typeSent := rawFields["assignee_type"]
 	_, idSent := rawFields["assignee_id"]
+	nextType := prev.AssigneeType
+	nextID := prev.AssigneeID
 	if typeSent || idSent {
-		nextType := prev.AssigneeType
 		if typeSent && req.AssigneeType != nil && *req.AssigneeType != "" {
 			nextType = *req.AssigneeType
 		}
@@ -869,7 +875,6 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "assignee_type must be agent or squad")
 			return
 		}
-		nextID := prev.AssigneeID
 		if idSent {
 			if req.AssigneeID == nil {
 				writeError(w, http.StatusBadRequest, "assignee_id cannot be null")
@@ -888,14 +893,18 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "assignee_id is required when changing assignee_type")
 			return
 		}
-		if !h.validateAutopilotAssignee(w, r, nextType, nextID, prev.WorkspaceID) {
-			return
-		}
 		if typeSent {
 			params.AssigneeType = pgtype.Text{String: nextType, Valid: true}
 		}
 		if idSent {
 			params.AssigneeID = nextID
+		}
+	}
+	_, spaceSent := rawFields["space_id"]
+	_, projectSent := rawFields["project_id"]
+	if typeSent || idSent || spaceSent || projectSent {
+		if !h.validateAutopilotAssignee(w, r, nextType, nextID, prev.WorkspaceID, params.SpaceID) {
+			return
 		}
 	}
 
@@ -1390,14 +1399,24 @@ func isValidAutopilotAssigneeType(t string) bool {
 // went offline by trigger time". Save-time validation exists so the user gets
 // immediate feedback ("can't pick this squad because its leader is archived")
 // instead of discovering the autopilot is dead at the next schedule tick.
-func (h *Handler) validateAutopilotAssignee(w http.ResponseWriter, r *http.Request, assigneeType string, assigneeID, workspaceID pgtype.UUID) bool {
+func (h *Handler) validateAutopilotAssignee(w http.ResponseWriter, r *http.Request, assigneeType string, assigneeID, workspaceID, targetSpaceID pgtype.UUID) bool {
 	switch assigneeType {
 	case "agent":
-		if _, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 			ID:          assigneeID,
 			WorkspaceID: workspaceID,
-		}); err != nil {
+		})
+		if err != nil {
 			writeError(w, http.StatusBadRequest, "assignee must be a valid agent in this workspace")
+			return false
+		}
+		if agent.ArchivedAt.Valid {
+			writeError(w, http.StatusUnprocessableEntity, "agent is archived; pick a different agent")
+			return false
+		}
+		actorType, actorID := h.resolveActor(r, requestUserID(r), util.UUIDToString(workspaceID))
+		if !h.canInvokeAgent(r.Context(), agent, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), util.UUIDToString(workspaceID), targetSpaceID) {
+			writeError(w, http.StatusForbidden, "agent is not available in this Space")
 			return false
 		}
 		return true
@@ -1432,8 +1451,8 @@ func (h *Handler) validateAutopilotAssignee(w http.ResponseWriter, r *http.Reque
 		// Private-leader gate: the member configuring the autopilot must have
 		// access to the private leader, same as validateAssigneePair.
 		actorType, actorID := h.resolveActor(r, requestUserID(r), util.UUIDToString(workspaceID))
-		if !h.canInvokeAgent(r.Context(), leader, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), util.UUIDToString(workspaceID)) {
-			writeError(w, http.StatusForbidden, "cannot assign autopilot to squad with private leader")
+		if !h.canInvokeAgent(r.Context(), leader, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), util.UUIDToString(workspaceID), targetSpaceID) {
+			writeError(w, http.StatusForbidden, "squad leader is not available in this Space")
 			return false
 		}
 		return true

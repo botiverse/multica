@@ -38,11 +38,13 @@ vi.mock("../../editor", () => ({
       onUpdate,
       placeholder,
       onUploadFile,
+      targetSpaceId,
     }: {
       defaultValue?: string;
       onUpdate?: (markdown: string) => void;
       placeholder?: string;
       onUploadFile?: (file: File) => Promise<UploadResult | null>;
+      targetSpaceId?: string | null;
     },
     ref: Ref<unknown>,
   ) {
@@ -67,6 +69,7 @@ vi.mock("../../editor", () => ({
     return (
       <textarea
         data-testid="editor"
+        data-target-space-id={targetSpaceId ?? ""}
         defaultValue={defaultValue}
         placeholder={placeholder}
         onChange={(event) => {
@@ -90,7 +93,9 @@ function renderWithProviders(ui: ReactNode) {
 }
 
 function renderCommentInput(onSubmit = vi.fn().mockResolvedValue(true)) {
-  const view = renderWithProviders(<CommentInput issueId="issue-1" onSubmit={onSubmit} />);
+  const view = renderWithProviders(
+    <CommentInput issueId="issue-1" spaceId="space-eng" onSubmit={onSubmit} />,
+  );
   return { ...view, onSubmit };
 }
 
@@ -104,6 +109,7 @@ function renderReplyInput({
   const view = renderWithProviders(
     <ReplyInput
       issueId="issue-1"
+      spaceId="space-eng"
       parentId="comment-1"
       avatarType="member"
       avatarId="user-1"
@@ -129,6 +135,21 @@ beforeEach(() => {
 });
 
 describe("comment composers", () => {
+  it("passes the Issue Space to main and reply Agent mention suggestions", () => {
+    const main = renderCommentInput();
+    expect(screen.getByTestId("editor")).toHaveAttribute(
+      "data-target-space-id",
+      "space-eng",
+    );
+    main.unmount();
+
+    renderReplyInput();
+    expect(screen.getByTestId("editor")).toHaveAttribute(
+      "data-target-space-id",
+      "space-eng",
+    );
+  });
+
   it("renders the main comment composer without a manual expand control", () => {
     const { container } = renderCommentInput();
 

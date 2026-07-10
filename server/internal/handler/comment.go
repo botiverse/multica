@@ -1709,7 +1709,7 @@ func (h *Handler) routeReplyToParentAuthor(ctx context.Context, issue db.Issue, 
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 		return commentAgentTrigger{}, false
 	}
-	if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.OriginatorUserID, uuidToString(issue.WorkspaceID)) {
+	if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.OriginatorUserID, uuidToString(issue.WorkspaceID), issue.SpaceID) {
 		return commentAgentTrigger{}, false
 	}
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, parent.AuthorID, opts)
@@ -1827,7 +1827,7 @@ func (h *Handler) routeConversationContinuationToAgent(ctx context.Context, issu
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 		return commentAgentTrigger{}, false
 	}
-	if !h.canInvokeAgent(ctx, agent, "member", memberID, memberID, uuidToString(issue.WorkspaceID)) {
+	if !h.canInvokeAgent(ctx, agent, "member", memberID, memberID, uuidToString(issue.WorkspaceID), issue.SpaceID) {
 		return commentAgentTrigger{}, false
 	}
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, agentID, opts)
@@ -1883,7 +1883,7 @@ func (h *Handler) routeAssignedSquadLeaderFallback(ctx context.Context, issue db
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 		return commentAgentTrigger{}, false
 	}
-	if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.OriginatorUserID, uuidToString(issue.WorkspaceID)) {
+	if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.OriginatorUserID, uuidToString(issue.WorkspaceID), issue.SpaceID) {
 		return commentAgentTrigger{}, false
 	}
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, squad.LeaderID, opts)
@@ -1964,7 +1964,7 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 				continue
 			}
 			// Private-agent gate: prevent triggering a private leader via squad mention.
-			if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.OriginatorUserID, wsID) {
+			if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.OriginatorUserID, wsID, issue.SpaceID) {
 				continue
 			}
 			hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, leaderID, opts)
@@ -1993,7 +1993,7 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 		}
 		// Private-agent gate (member→private requires allowed_principals;
 		// agent→agent always passes).
-		if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.OriginatorUserID, wsID) {
+		if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.OriginatorUserID, wsID, issue.SpaceID) {
 			continue
 		}
 		hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, agentUUID, opts)

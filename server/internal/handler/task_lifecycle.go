@@ -143,6 +143,56 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 		sourceTaskID = parsed
 	}
 
+	// Resolve the same final target the service will rerun, then apply the
+	// current invocation and Space Availability rules. A historical task row
+	// selects an agent; it is not a permanent grant to run that agent after its
+	// audience or selected Spaces have changed.
+	var targetAgentID pgtype.UUID
+	if sourceTaskID.Valid {
+		source, err := h.Queries.GetAgentTask(r.Context(), sourceTaskID)
+		if err != nil || !source.IssueID.Valid || uuidToString(source.IssueID) != uuidToString(issue.ID) {
+			writeError(w, http.StatusBadRequest, "source task does not belong to this issue")
+			return
+		}
+		targetAgentID = source.AgentID
+	} else {
+		switch {
+		case issue.AssigneeType.Valid && issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid:
+			targetAgentID = issue.AssigneeID
+		case issue.AssigneeType.Valid && issue.AssigneeType.String == "squad" && issue.AssigneeID.Valid:
+			squad, err := h.Queries.GetSquadInWorkspace(r.Context(), db.GetSquadInWorkspaceParams{
+				ID:          issue.AssigneeID,
+				WorkspaceID: issue.WorkspaceID,
+			})
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "issue squad is unavailable")
+				return
+			}
+			targetAgentID = squad.LeaderID
+		default:
+			writeError(w, http.StatusBadRequest, "issue is not assigned to an agent or squad")
+			return
+		}
+	}
+	targetAgent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+		ID:          targetAgentID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "rerun agent is unavailable")
+		return
+	}
+	workspaceID := uuidToString(issue.WorkspaceID)
+	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	if !h.canInvokeAgent(
+		r.Context(), targetAgent, actorType, actorID,
+		h.invokeOriginatorFromRequest(r, actorType, actorID),
+		workspaceID, issue.SpaceID,
+	) {
+		writeError(w, http.StatusForbidden, "rerun agent is not available in this Space")
+		return
+	}
+
 	task, err := h.TaskService.RerunIssue(r.Context(), issue.ID, sourceTaskID, pgtype.UUID{})
 	if err != nil {
 		slog.Warn("issue rerun failed", "issue_id", id, "error", err)

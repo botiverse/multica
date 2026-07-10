@@ -151,6 +151,7 @@ export const BoardCardContent = memo(function BoardCardContent({
         <AssigneePicker
           assigneeType={issue.assignee_type}
           assigneeId={issue.assignee_id}
+          spaceId={issue.space_id}
           onUpdate={handleUpdate}
           trigger={assigneeInner}
         />

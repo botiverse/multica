@@ -75,7 +75,7 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 	// invoke permission (MUL-3963), not the softer view gate. Agent-to-agent
 	// chat sessions are judged by the top-of-chain originator.
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	if !h.canInvokeAgent(r.Context(), agent, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), workspaceID) {
+	if !h.canInvokeAgent(r.Context(), agent, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), workspaceID, pgtype.UUID{}) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
@@ -582,6 +582,15 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load chat agent")
 		return
 	}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	if !h.canInvokeAgent(
+		r.Context(), agent, actorType, actorID,
+		h.invokeOriginatorFromRequest(r, actorType, actorID),
+		workspaceID, pgtype.UUID{},
+	) {
+		writeError(w, http.StatusForbidden, "agent is not available for direct Chat")
+		return
+	}
 	if agent.ArchivedAt.Valid {
 		writeError(w, http.StatusConflict, "chat agent is archived")
 		return
@@ -609,7 +618,6 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// web chat the sender is the authenticated request user (sessions are
 	// creator-only), so they are the task initiator — surfaced to the agent
 	// under `## Task Initiator`.
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	sent, err := h.TaskService.SendDirectChatMessage(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to send chat message: "+err.Error())

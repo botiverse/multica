@@ -842,6 +842,10 @@ export const AgentPermissionModeSchema = z
   .enum(["private", "public_to"])
   .catch("private");
 
+export const AgentAvailabilityModeSchema = z
+  .enum(["private", "selected_spaces", "workspace"])
+  .catch("private");
+
 export const AgentInvocationTargetSchema = z
   .object({
     target_type: z.string(),
@@ -863,6 +867,8 @@ const MinimalAgentSchema = z.object({
   id: z.string(),
   permission_mode: AgentPermissionModeSchema.optional(),
   invocation_targets: AgentInvocationTargetsSchema.optional(),
+  availability_mode: AgentAvailabilityModeSchema.optional(),
+  availability_space_ids: z.array(z.string()).default([]).optional(),
 }).loose();
 
 export const CreateAgentFromTemplateResponseSchema = z.object({

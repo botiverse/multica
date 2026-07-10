@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
 import { AppSidebar } from "./app-sidebar";
 
-const { chatSessions, chatStore, detail, deletePin, navigation, pins, summary, workspaces } = vi.hoisted(() => ({
+const { chatSessions, chatStore, detail, deletePin, navigation, pins, spaces, summary, workspaces } = vi.hoisted(() => ({
   chatSessions: { current: [] as { id?: string; unread_count?: number }[] },
   chatStore: { current: { activeSessionId: null as string | null, isOpen: false } },
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
@@ -26,6 +26,7 @@ const { chatSessions, chatStore, detail, deletePin, navigation, pins, summary, w
       },
     ],
   },
+  spaces: { current: [] as import("@multica/core/types").Space[] },
 }));
 
 vi.mock("@dnd-kit/core", () => ({
@@ -137,6 +138,11 @@ vi.mock("@multica/core/paths", () => ({
     runtimes: () => "/acme/runtimes",
     skills: () => "/acme/skills",
     settings: () => "/acme/settings",
+    spaceNew: () => "/acme/spaces/new",
+    spaceDetail: (key: string) => `/acme/space/${key}`,
+    spaceIssues: (key: string) => `/acme/space/${key}/issues`,
+    spaceProjects: (key: string) => `/acme/space/${key}/projects`,
+    spaceAutopilots: (key: string) => `/acme/space/${key}/autopilots`,
     issueDetail: (id: string) => `/acme/issues/${id}`,
     projectDetail: (id: string) => `/acme/projects/${id}`,
   }),
@@ -187,11 +193,16 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
     if (queryKey[0] === "issue") return detail.current;
     if (queryKey[0] === "inbox" && queryKey[1] === "unread-summary") return { data: summary.current };
     if (queryKey[0] === "workspaces") return { data: workspaces.current };
+    if (queryKey[0] === "spaces") return { data: spaces.current };
     if (queryKey[0] === "chat" && queryKey[2] === "sessions") return { data: chatSessions.current };
     return { data: [] };
   },
   useQueryClient: () => ({ fetchQuery: vi.fn(), invalidateQueries: vi.fn() }),
 }));
+
+beforeEach(() => {
+  spaces.current = [];
+});
 
 describe("PinRow", () => {
   beforeEach(() => {
@@ -240,6 +251,37 @@ describe("PinRow", () => {
     // must be the ONLY active element — no nav entry lights up alongside it.
     expect(container.querySelector('button[data-href="/acme/issues"]')).toBeNull();
     expect(container.querySelectorAll('[data-active="true"]')).toHaveLength(1);
+  });
+});
+
+describe("project navigation", () => {
+  it("shows Projects only inside a space, not in the Workspace group", () => {
+    spaces.current = [
+      {
+        id: "space-1",
+        workspace_id: "ws-1",
+        name: "Engineering",
+        key: "ENG",
+        icon: null,
+        issue_counter: 0,
+        is_default: true,
+        visibility: "open",
+        archived_at: null,
+        created_by: "user-1",
+        created_at: "2026-05-06T00:00:00Z",
+        updated_at: "2026-05-06T00:00:00Z",
+        is_member: true,
+        member_role: "lead",
+        sort_order: 1,
+      },
+    ];
+
+    const { container } = render(<AppSidebar />);
+
+    expect(container.querySelector('button[data-href="/acme/projects"]')).toBeNull();
+    expect(
+      container.querySelector('button[data-href="/acme/space/ENG/projects"]'),
+    ).not.toBeNull();
   });
 });
 

@@ -658,6 +658,7 @@ function SubIssueRow({ child }: { child: Issue }) {
       <AssigneePicker
         assigneeType={child.assignee_type}
         assigneeId={child.assignee_id}
+        spaceId={child.space_id}
         onUpdate={handleUpdate}
         align="end"
         trigger={
@@ -1549,7 +1550,7 @@ function IssueDetailInner({ issueId, onDelete, onDone, defaultSidebarOpen = true
             <StatusPicker status={issue.status} onUpdate={handleUpdateField} align="start" />
           </PropRow>
           <PropRow label={t(($) => $.detail.prop_assignee)}>
-            <AssigneePicker assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} onUpdate={handleUpdateField} align="start" />
+            <AssigneePicker assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} spaceId={issue.space_id} onUpdate={handleUpdateField} align="start" />
           </PropRow>
           <PropRow label={t(($) => $.detail.prop_project)}>
             <ProjectPicker
@@ -1840,6 +1841,7 @@ function IssueDetailInner({ issueId, onDelete, onDone, defaultSidebarOpen = true
         <div className="pb-3" id={`comment-${item.id}`}>
           <CommentCard
             issueId={id}
+            spaceId={issue.space_id ?? null}
             entry={item.entry}
             replies={timelineView.threadReplies.get(item.id) ?? EMPTY_REPLIES}
             currentUserId={user?.id}
@@ -2066,6 +2068,7 @@ function IssueDetailInner({ issueId, onDelete, onDone, defaultSidebarOpen = true
               ref={descEditorRef}
               key={id}
               defaultValue={issue.description || ""}
+              targetSpaceId={issue.space_id ?? null}
               placeholder={t(($) => $.detail.desc_placeholder)}
               onUpdate={(md) => {
                 // Bind any pending uploads still referenced in the markdown
@@ -2369,7 +2372,12 @@ function IssueDetailInner({ issueId, onDelete, onDone, defaultSidebarOpen = true
                 keeps the previous issue's in-memory content and the
                 next keystroke would flush it into the new issue's
                 draft key. */}
-            <CommentInput key={id} issueId={id} onSubmit={submitComment} />
+            <CommentInput
+              key={id}
+              issueId={id}
+              spaceId={issue.space_id ?? null}
+              onSubmit={submitComment}
+            />
           </div>
         </div>
         </div>

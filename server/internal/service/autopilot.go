@@ -305,8 +305,8 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	// Re-check immediately before issue creation so a permission change between
 	// admission and dispatch cannot create work for a leader the creator may no
 	// longer invoke.
-	if ap.AssigneeType == "squad" && !s.canCreatorInvokeAgent(ctx, ap, leader) {
-		return &errDispatchSkipped{reason: formatAdmissionReason(ap, "creator cannot access private squad leader")}
+	if !s.canCreatorInvokeAgent(ctx, ap, leader) {
+		return &errDispatchSkipped{reason: formatAdmissionReason(ap, "assignee is no longer available in target Space")}
 	}
 
 	title := s.interpolateTemplate(ap, *run, triggerTimezone)
@@ -536,9 +536,10 @@ func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot,
 		return &errDispatchSkipped{reason: formatAdmissionReason(ap, reason)}
 	}
 
-	// Fail-closed invocation gate for squad autopilots.
-	if ap.AssigneeType == "squad" && !s.canCreatorInvokeAgent(ctx, ap, agent) {
-		return &errDispatchSkipped{reason: formatAdmissionReason(ap, "creator cannot access private squad leader")}
+	// Fail closed for both direct-agent and squad autopilots if access or
+	// location changed after admission but before the enqueue side effect.
+	if !s.canCreatorInvokeAgent(ctx, ap, agent) {
+		return &errDispatchSkipped{reason: formatAdmissionReason(ap, "assignee is no longer available in target Space")}
 	}
 
 	task, err := s.Queries.CreateAutopilotTask(ctx, db.CreateAutopilotTaskParams{
@@ -877,7 +878,7 @@ func (s *AutopilotService) shouldSkipDispatch(ctx context.Context, ap db.Autopil
 	// autopilots are judged as workspace principals. For squad autopilots the
 	// gate runs against the resolved leader.
 	if !s.canCreatorInvokeAgent(ctx, ap, agent) {
-		return "autopilot creator lacks access to private assignee agent", true
+		return "autopilot assignee is not available in target Space", true
 	}
 	return "", false
 }
@@ -1354,15 +1355,62 @@ func isSupportedIssueTitleVariable(name string) bool {
 // canCreatorInvokeAgent checks whether the autopilot's creator may invoke the
 // target agent under the invocation-permission model (MUL-3963). It mirrors
 // handler.canInvokeAgent with the autopilot creator as the effective user:
-//   - member creator who owns the agent -> always
+//   - Availability location gate first (including for the agent owner):
+//     private -> member owner in an active Space they can view;
+//     selected_spaces -> ap.SpaceID must be explicitly selected;
+//     workspace -> any active Space in the same workspace.
+//   - member creator who owns the agent -> passes the audience gate only after
+//     the location gate above
 //   - private agent -> only the owner (NO admin bypass, NO agent-created bypass)
 //   - public_to agent -> workspace target admits any workspace-member creator
 //     (and agent-created autopilots as workspace principals); member target
-//     admits the matching creator; space targets are inert.
+//     admits the matching creator.
 //
 // Fail-closed on any lookup error.
 func (s *AutopilotService) canCreatorInvokeAgent(ctx context.Context, ap db.Autopilot, agent db.Agent) bool {
+	if agent.WorkspaceID != ap.WorkspaceID {
+		return false
+	}
 	creatorID := util.UUIDToString(ap.CreatedByID)
+	// Every Autopilot invocation has a concrete Space. Validate it again at
+	// dispatch time so archiving/moving after save fails closed.
+	if !ap.SpaceID.Valid {
+		return false
+	}
+	space, err := s.Queries.GetWorkspaceSpace(ctx, db.GetWorkspaceSpaceParams{
+		ID:          ap.SpaceID,
+		WorkspaceID: ap.WorkspaceID,
+	})
+	if err != nil || space.ArchivedAt.Valid {
+		return false
+	}
+
+	switch agent.AvailabilityMode {
+	case "private":
+		if ap.CreatedByType != "member" || util.UUIDToString(agent.OwnerID) != creatorID {
+			return false
+		}
+		canView, err := s.Queries.CanViewWorkspaceSpace(ctx, db.CanViewWorkspaceSpaceParams{
+			WorkspaceID: ap.WorkspaceID,
+			ID:          ap.SpaceID,
+			UserID:      ap.CreatedByID,
+		})
+		return err == nil && canView
+	case "selected_spaces":
+		available, err := s.Queries.IsAgentAvailableInActiveSpace(ctx, db.IsAgentAvailableInActiveSpaceParams{
+			AgentID:     agent.ID,
+			WorkspaceID: ap.WorkspaceID,
+			SpaceID:     ap.SpaceID,
+		})
+		if err != nil || !available {
+			return false
+		}
+	case "workspace":
+		// Active + same-workspace validation already passed above.
+	default:
+		return false
+	}
+
 	if ap.CreatedByType == "member" && util.UUIDToString(agent.OwnerID) == creatorID {
 		return true
 	}
