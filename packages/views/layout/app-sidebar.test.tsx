@@ -268,6 +268,7 @@ describe("project navigation", () => {
         name: "Engineering",
         key: "ENG",
         icon: null,
+        context: "",
         issue_counter: 0,
         is_default: true,
         visibility: "open",
