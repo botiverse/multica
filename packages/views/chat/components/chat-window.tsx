@@ -19,6 +19,8 @@ import { agentListOptions, memberListOptions } from "@multica/core/workspace/que
 import { canAssignAgent } from "@multica/views/issues/components";
 import { api } from "@multica/core/api";
 import { useAgentPresenceDetail, useWorkspaceAgentAvailability } from "@multica/core/agents";
+import { chatSpacesForAgent, defaultChatSpaceId } from "@multica/core/chat";
+import { activeSpaceListOptions } from "@multica/core/spaces";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { ActorAvatar } from "../../common/actor-avatar";
 import {
@@ -55,6 +57,7 @@ import { hasOptimisticInFlight } from "./use-chat-controller";
 import { createLogger } from "@multica/core/logger";
 import type { Agent, Attachment, ChatMessage, ChatMessagesPage, ChatPendingTask, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
 import { useT } from "../../i18n";
+import { ChatContextPicker } from "./chat-context-picker";
 
 const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
@@ -169,9 +172,12 @@ export function ChatWindow() {
   const setOpen = useChatStore((s) => s.setOpen);
   const setActiveSession = useChatStore((s) => s.setActiveSession);
   const setSelectedAgentId = useChatStore((s) => s.setSelectedAgentId);
+  const newSessionSpaceId = useChatStore((s) => s.newSessionSpaceId);
+  const setNewSessionSpaceId = useChatStore((s) => s.setNewSessionSpaceId);
   const user = useAuthStore((s) => s.user);
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: spaces = [] } = useQuery(activeSpaceListOptions(wsId));
   // Single sessions cache — eliminates the separate active/all queries
   // that used to drift during the WS-invalidate window.
   const { data: sessions = [], isSuccess: sessionsLoaded } = useQuery(
@@ -245,7 +251,10 @@ export function ChatWindow() {
   const currentMember = members.find((m) => m.user_id === user?.id);
   const memberRole = currentMember?.role;
   const availableAgents = agents.filter(
-    (a) => !a.archived_at && canAssignAgent(a, user?.id, memberRole, null),
+    (a) =>
+      !a.archived_at &&
+      canAssignAgent(a, user?.id, memberRole) &&
+      chatSpacesForAgent(a, spaces, user?.id, memberRole).length > 0,
   );
 
   // The agent bound to the OPEN session, resolved from the full agent list
@@ -266,13 +275,20 @@ export function ChatWindow() {
     availableAgents.find((a) => a.id === selectedAgentId) ??
     availableAgents[0] ??
     null;
+  const availableSpaces = useMemo(
+    () =>
+      activeAgent ? chatSpacesForAgent(activeAgent, spaces, user?.id, memberRole) : [],
+    [activeAgent, spaces, user?.id, memberRole],
+  );
 
   // Three-state availability — "loading" stays neutral (no banner, no
   // disable) so the input doesn't flash a fake "no agent" state in the
   // few hundred ms before the agent list query resolves. Only `"none"`
   // (server confirmed: zero usable agents) drives the disabled UI.
   const agentAvailability = useWorkspaceAgentAvailability();
-  const noAgent = agentAvailability === "none";
+  const noAgent =
+    agentAvailability === "none" ||
+    (agentAvailability === "available" && availableAgents.length === 0);
 
   // Presence drives both the avatar status dot (via ActorAvatar) and the
   // OfflineBanner / TaskStatusPill availability copy. `useAgentPresenceDetail`
@@ -388,6 +404,7 @@ export function ChatWindow() {
           const session = await createSession.mutateAsync({
             agent_id: activeAgent.id,
             title: titleSeed.slice(0, 50),
+            space_id: newSessionSpaceId,
           });
           return session.id;
         } finally {
@@ -397,7 +414,7 @@ export function ChatWindow() {
       sessionPromiseRef.current = promise;
       return promise;
     },
-    [activeSessionId, activeAgent, createSession, sessions, sessionsLoaded, qc],
+    [activeSessionId, activeAgent, createSession, sessions, sessionsLoaded, qc, newSessionSpaceId],
   );
 
   const handleUploadFile = useCallback(
@@ -669,11 +686,14 @@ export function ChatWindow() {
         previousSessionId: activeSessionId,
       });
       setSelectedAgentId(agent.id);
+      setNewSessionSpaceId(
+        defaultChatSpaceId(chatSpacesForAgent(agent, spaces, user?.id, memberRole)),
+      );
       // Reset session when switching agent
       setActiveSession(null);
       requestInputFocus();
     },
-    [activeAgent, selectedAgentId, activeSessionId, setSelectedAgentId, setActiveSession, requestInputFocus],
+    [activeAgent, selectedAgentId, activeSessionId, setSelectedAgentId, setNewSessionSpaceId, spaces, user?.id, memberRole, setActiveSession, requestInputFocus],
   );
 
   const handleNewChat = useCallback(() => {
@@ -682,8 +702,9 @@ export function ChatWindow() {
       previousPendingTask: pendingTaskId,
     });
     setActiveSession(null);
+    setNewSessionSpaceId(defaultChatSpaceId(availableSpaces));
     requestInputFocus();
-  }, [activeSessionId, pendingTaskId, setActiveSession, requestInputFocus]);
+  }, [activeSessionId, pendingTaskId, setActiveSession, setNewSessionSpaceId, availableSpaces, requestInputFocus]);
 
   const handleSelectSession = useCallback(
     (session: ChatSession) => {
@@ -865,6 +886,15 @@ export function ChatWindow() {
         noAgent={noAgent}
         agentArchived={isAgentArchived}
         agentName={activeAgent?.name}
+        topAdornment={
+          !activeSessionId && activeAgent ? (
+            <ChatContextPicker
+              spaces={availableSpaces}
+              value={newSessionSpaceId}
+              onChange={setNewSessionSpaceId}
+            />
+          ) : undefined
+        }
         leftAdornment={
           <AgentDropdown
             agents={availableAgents}

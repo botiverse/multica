@@ -7,11 +7,15 @@ const h = vi.hoisted(() => {
   const store = {
     activeSessionId: null as string | null,
     selectedAgentId: null as string | null,
+    newSessionSpaceId: null as string | null,
     setActiveSession: vi.fn((id: string | null) => {
       store.activeSessionId = id;
     }),
     setSelectedAgentId: vi.fn((id: string | null) => {
       store.selectedAgentId = id;
+    }),
+    setNewSessionSpaceId: vi.fn((id: string | null) => {
+      store.newSessionSpaceId = id;
     }),
   };
   return {
@@ -31,6 +35,9 @@ vi.mock("@multica/core/auth", () => ({
 vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: () => ({ queryKey: ["agents"] }),
   memberListOptions: () => ({ queryKey: ["members"] }),
+}));
+vi.mock("@multica/core/spaces", () => ({
+  activeSpaceListOptions: () => ({ queryKey: ["spaces"] }),
 }));
 vi.mock("@multica/views/issues/components", () => ({ canAssignAgent: () => true }));
 vi.mock("@multica/core/api", () => ({
@@ -53,6 +60,8 @@ vi.mock("@multica/core/chat", () => ({
     (sel: (s: typeof h.store) => unknown) => sel(h.store),
     { getState: () => h.store },
   ),
+  chatSpacesForAgent: () => [{ id: "space-1" }],
+  defaultChatSpaceId: () => "space-1",
 }));
 vi.mock("@multica/core/logger", () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -70,6 +79,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
       if (key.includes("members")) {
         return { data: [{ user_id: "user-1", role: "admin" }] };
       }
+      if (key.includes("spaces")) return { data: [{ id: "space-1" }] };
       if (key.includes("sessions")) return { data: h.sessions, isSuccess: true };
       return { data: null };
     },
