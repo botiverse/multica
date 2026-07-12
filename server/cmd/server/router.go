@@ -1329,6 +1329,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
 	r.With(authRL).Post("/auth/google", h.GoogleLogin)
 	r.With(authRL).Post("/auth/raft", h.RaftLogin)
+	// Login with Raft / Raft App: OAuth return endpoint (integration invoke +
+	// browser) and the public agent-behavior manifest (both well-known aliases).
+	r.With(authRL).Get("/auth/raft/callback", h.RaftCallback)
+	r.Get("/.well-known/raft-agent-manifest.json", h.RaftAgentManifest)
+	r.Get("/.well-known/slock-agent-manifest.json", h.RaftAgentManifest)
 	r.Post("/auth/logout", h.Logout)
 
 	// Public API
