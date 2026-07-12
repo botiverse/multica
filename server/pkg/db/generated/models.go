@@ -731,6 +731,17 @@ type ProjectResource struct {
 	CreatedBy    pgtype.UUID        `json:"created_by"`
 }
 
+type RaftIdentity struct {
+	ID            pgtype.UUID        `json:"id"`
+	UserID        pgtype.UUID        `json:"user_id"`
+	RaftServerID  string             `json:"raft_server_id"`
+	RaftSub       string             `json:"raft_sub"`
+	PrincipalType string             `json:"principal_type"`
+	RaftUsername  pgtype.Text        `json:"raft_username"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type RuntimeProfile struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
