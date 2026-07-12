@@ -49,15 +49,99 @@ type raftUserInfo struct {
 	ServerRole        string `json:"server_role"`
 }
 
+// raftAuthError carries an HTTP status alongside a client-safe message so both
+// the JSON (RaftLogin) and browser-callback (RaftCallback) entry points can map
+// a shared authentication failure onto the right response.
+type raftAuthError struct {
+	status int
+	msg    string
+}
+
+func (e *raftAuthError) Error() string { return e.msg }
+
+// raftConfigured reports whether Login with Raft is wired via env.
+func raftAuthConfig() (clientID, clientSecret, baseURL string, ok bool) {
+	clientID = os.Getenv("RAFT_OAUTH_CLIENT_ID")
+	clientSecret = os.Getenv("RAFT_OAUTH_CLIENT_SECRET")
+	baseURL = strings.TrimRight(os.Getenv("RAFT_OAUTH_BASE_URL"), "/")
+	return clientID, clientSecret, baseURL, clientID != "" && clientSecret != "" && baseURL != ""
+}
+
+// authenticateRaft runs the shared Login-with-Raft exchange: swap the one-time
+// code for a Raft access token, fetch identity claims, and resolve them to a
+// Multica user-principal (creating it + the raft_identity link on first sight).
+// Both the JSON login endpoint and the browser callback build on this.
+func (h *Handler) authenticateRaft(ctx context.Context, code, redirectURI string) (db.User, bool, *raftAuthError) {
+	clientID, clientSecret, baseURL, ok := raftAuthConfig()
+	if !ok {
+		return db.User{}, false, &raftAuthError{http.StatusServiceUnavailable, "Login with Raft is not configured"}
+	}
+	if redirectURI == "" {
+		redirectURI = os.Getenv("RAFT_OAUTH_REDIRECT_URI")
+	}
+
+	// 1. Exchange the authorization code for a Raft access token. Client
+	// credentials go in the Authorization header (HTTP Basic), which Raft's
+	// token endpoint accepts.
+	form := url.Values{
+		"grant_type":   {"authorization_code"},
+		"code":         {code},
+		"redirect_uri": {redirectURI},
+	}
+	tokenReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		baseURL+"/api/oauth/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return db.User{}, false, &raftAuthError{http.StatusInternalServerError, "internal error"}
+	}
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	tokenReq.SetBasicAuth(clientID, clientSecret)
+
+	tokenResp, err := http.DefaultClient.Do(tokenReq)
+	if err != nil {
+		slog.Error("raft oauth token exchange failed", "error", err)
+		return db.User{}, false, &raftAuthError{http.StatusBadGateway, "failed to exchange code with Raft"}
+	}
+	defer tokenResp.Body.Close()
+
+	tokenBody, err := io.ReadAll(tokenResp.Body)
+	if err != nil {
+		return db.User{}, false, &raftAuthError{http.StatusBadGateway, "failed to read Raft token response"}
+	}
+	if tokenResp.StatusCode != http.StatusOK {
+		slog.Error("raft oauth token exchange returned error", "status", tokenResp.StatusCode, "body", string(tokenBody))
+		return db.User{}, false, &raftAuthError{http.StatusBadRequest, "failed to exchange code with Raft"}
+	}
+
+	var rToken raftTokenResponse
+	if err := json.Unmarshal(tokenBody, &rToken); err != nil {
+		return db.User{}, false, &raftAuthError{http.StatusBadGateway, "failed to parse Raft token response"}
+	}
+	if rToken.AccessToken == "" {
+		return db.User{}, false, &raftAuthError{http.StatusBadGateway, "Raft token response had no access_token"}
+	}
+
+	// 2. Fetch identity claims.
+	info, err := h.fetchRaftUserInfo(ctx, baseURL, rToken.AccessToken)
+	if err != nil {
+		slog.Error("raft userinfo fetch failed", "error", err)
+		return db.User{}, false, &raftAuthError{http.StatusBadGateway, "failed to fetch user info from Raft"}
+	}
+	if info.Sub == "" || info.ServerID == "" {
+		return db.User{}, false, &raftAuthError{http.StatusBadRequest, "Raft user info missing sub/server_id"}
+	}
+
+	// 3. Resolve to a Multica user through the raft_identity link.
+	user, isNew, err := h.findOrCreateRaftUser(ctx, info)
+	if err != nil {
+		slog.Error("raft login: provision user failed", "error", err, "raft_sub", info.Sub)
+		return db.User{}, false, &raftAuthError{http.StatusInternalServerError, "failed to provision user"}
+	}
+	return user, isNew, nil
+}
+
 // RaftLogin authenticates a Raft principal (human or agent) through "Login with
-// Raft" and provisions/links a Multica user-principal for it.
-//
-// Flow mirrors GoogleLogin, pointed at the Raft OAuth server:
-//  1. Exchange the one-time code at <RAFT_OAUTH_BASE_URL>/api/oauth/token
-//     (grant_type=authorization_code) using this app's client credentials.
-//  2. Fetch identity claims from /api/oauth/userinfo with the returned bearer.
-//  3. Resolve the claims to a Multica user through the raft_identity link table,
-//     creating the user + link on first sight, then issue a Multica session.
+// Raft" and provisions/links a Multica user-principal for it, returning a JSON
+// session (used by the web login page). Mirrors GoogleLogin.
 //
 // Multica personal access tokens are user-keyed, so every Raft principal —
 // including agents — maps to a Multica user-principal here. Representing an
@@ -73,83 +157,9 @@ func (h *Handler) RaftLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientID := os.Getenv("RAFT_OAUTH_CLIENT_ID")
-	clientSecret := os.Getenv("RAFT_OAUTH_CLIENT_SECRET")
-	baseURL := strings.TrimRight(os.Getenv("RAFT_OAUTH_BASE_URL"), "/")
-	if clientID == "" || clientSecret == "" || baseURL == "" {
-		writeError(w, http.StatusServiceUnavailable, "Login with Raft is not configured")
-		return
-	}
-
-	redirectURI := req.RedirectURI
-	if redirectURI == "" {
-		redirectURI = os.Getenv("RAFT_OAUTH_REDIRECT_URI")
-	}
-
-	// 1. Exchange the authorization code for a Raft access token. Client
-	// credentials go in the Authorization header (HTTP Basic), which Raft's
-	// token endpoint accepts.
-	form := url.Values{
-		"grant_type":   {"authorization_code"},
-		"code":         {req.Code},
-		"redirect_uri": {redirectURI},
-	}
-	tokenReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
-		baseURL+"/api/oauth/token", strings.NewReader(form.Encode()))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	tokenReq.SetBasicAuth(clientID, clientSecret)
-
-	tokenResp, err := http.DefaultClient.Do(tokenReq)
-	if err != nil {
-		slog.Error("raft oauth token exchange failed", "error", err)
-		writeError(w, http.StatusBadGateway, "failed to exchange code with Raft")
-		return
-	}
-	defer tokenResp.Body.Close()
-
-	tokenBody, err := io.ReadAll(tokenResp.Body)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to read Raft token response")
-		return
-	}
-	if tokenResp.StatusCode != http.StatusOK {
-		slog.Error("raft oauth token exchange returned error", "status", tokenResp.StatusCode, "body", string(tokenBody))
-		writeError(w, http.StatusBadRequest, "failed to exchange code with Raft")
-		return
-	}
-
-	var rToken raftTokenResponse
-	if err := json.Unmarshal(tokenBody, &rToken); err != nil {
-		writeError(w, http.StatusBadGateway, "failed to parse Raft token response")
-		return
-	}
-	if rToken.AccessToken == "" {
-		writeError(w, http.StatusBadGateway, "Raft token response had no access_token")
-		return
-	}
-
-	// 2. Fetch identity claims.
-	info, err := h.fetchRaftUserInfo(r.Context(), baseURL, rToken.AccessToken)
-	if err != nil {
-		slog.Error("raft userinfo fetch failed", "error", err)
-		writeError(w, http.StatusBadGateway, "failed to fetch user info from Raft")
-		return
-	}
-	if info.Sub == "" || info.ServerID == "" {
-		writeError(w, http.StatusBadRequest, "Raft user info missing sub/server_id")
-		return
-	}
-
-	// 3. Resolve to a Multica user through the raft_identity link.
-	user, isNew, err := h.findOrCreateRaftUser(r.Context(), info)
-	if err != nil {
-		slog.Error("raft login: provision user failed",
-			append(logger.RequestAttrs(r), "error", err, "raft_sub", info.Sub)...)
-		writeError(w, http.StatusInternalServerError, "failed to provision user")
+	user, isNew, authErr := h.authenticateRaft(r.Context(), req.Code, req.RedirectURI)
+	if authErr != nil {
+		writeError(w, authErr.status, authErr.msg)
 		return
 	}
 	if isNew {
@@ -160,8 +170,7 @@ func (h *Handler) RaftLogin(w http.ResponseWriter, r *http.Request) {
 
 	tokenString, err := h.issueJWT(user)
 	if err != nil {
-		slog.Warn("raft login failed",
-			append(logger.RequestAttrs(r), "error", err, "raft_sub", info.Sub)...)
+		slog.Warn("raft login failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
@@ -175,7 +184,7 @@ func (h *Handler) RaftLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("user logged in via raft",
-		append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "raft_sub", info.Sub, "principal_type", info.Type)...)
+		append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID))...)
 	writeJSON(w, http.StatusOK, LoginResponse{
 		Token: tokenString,
 		User:  userToResponse(user),
