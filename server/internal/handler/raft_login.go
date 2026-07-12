@@ -265,10 +265,79 @@ func (h *Handler) findOrCreateRaftUser(ctx context.Context, info raftUserInfo) (
 	}); err != nil {
 		return db.User{}, false, err
 	}
+
+	// Give the new Raft principal a personal workspace (owner membership +
+	// onboarded) so it has an immediate home to list issues and publish tasks
+	// in — mirroring the normal onboarding flow's first-workspace creation.
+	// The slug is derived deterministically from the Raft sub, so it is stable
+	// across logins and collision-free across principals.
+	wsName := raftWorkspaceName(info)
+	ws, err := qtx.CreateWorkspace(ctx, db.CreateWorkspaceParams{
+		Name:        wsName,
+		Slug:        raftWorkspaceSlug(info),
+		IssuePrefix: generateIssuePrefix(wsName),
+	})
+	if err != nil {
+		return db.User{}, false, err
+	}
+	if _, err = qtx.CreateMember(ctx, db.CreateMemberParams{
+		WorkspaceID: ws.ID,
+		UserID:      created.ID,
+		Role:        "owner",
+	}); err != nil {
+		return db.User{}, false, err
+	}
+	if _, err = qtx.MarkUserOnboarded(ctx, created.ID); err != nil {
+		return db.User{}, false, err
+	}
+
 	if err = tx.Commit(ctx); err != nil {
 		return db.User{}, false, err
 	}
 	return created, true, nil
+}
+
+// raftWorkspaceName / raftWorkspaceSlug derive a stable personal-workspace
+// identity for a Raft principal. The slug uses the Raft sub so it is unique per
+// principal and identical across that principal's logins.
+func raftWorkspaceName(info raftUserInfo) string {
+	return raftDisplayName(info) + " Workspace"
+}
+
+func raftWorkspaceSlug(info raftUserInfo) string {
+	base := slugifyRaft(info.PreferredUsername)
+	if base == "" {
+		base = "raft"
+	}
+	suffix := slugifyRaft(info.Sub)
+	suffix = strings.ReplaceAll(suffix, "-", "")
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	if suffix == "" {
+		suffix = "ws"
+	}
+	return base + "-" + suffix
+}
+
+// slugifyRaft lowercases and reduces a string to the workspace slug alphabet
+// (^[a-z0-9]+(?:-[a-z0-9]+)*$): alnum runs joined by single hyphens, no
+// leading/trailing hyphen.
+func slugifyRaft(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	prevHyphen := false
+	for _, r := range s {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			prevHyphen = false
+		case b.Len() > 0 && !prevHyphen:
+			b.WriteByte('-')
+			prevHyphen = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 // raftSyntheticEmail builds a stable, unique, non-routable address for a Raft
