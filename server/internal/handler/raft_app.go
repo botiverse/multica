@@ -96,6 +96,28 @@ func (h *Handler) RaftAgentManifest(w http.ResponseWriter, r *http.Request) {
 					"workspaces": {Type: "array", Description: "Workspaces the caller belongs to."},
 				},
 			},
+			{
+				Name:        "list-issues",
+				Description: "List issues in a workspace. Pass workspace_slug from list-workspaces.",
+				Endpoint:    raftManifestEndpoint{Method: "GET", Path: "/api/issues"},
+				Parameters: map[string]raftManifestField{
+					"workspace_slug": {Type: "string", Description: "Target workspace slug.", Required: true},
+				},
+				Returns: map[string]raftManifestField{
+					"issues": {Type: "array", Description: "Issues in the workspace."},
+				},
+			},
+			{
+				Name:        "list-agents",
+				Description: "List the agents in a workspace. Pass workspace_slug from list-workspaces.",
+				Endpoint:    raftManifestEndpoint{Method: "GET", Path: "/api/agents"},
+				Parameters: map[string]raftManifestField{
+					"workspace_slug": {Type: "string", Description: "Target workspace slug.", Required: true},
+				},
+				Returns: map[string]raftManifestField{
+					"agents": {Type: "array", Description: "Agents in the workspace."},
+				},
+			},
 		},
 	}
 	writeJSON(w, http.StatusOK, manifest)
