@@ -9,6 +9,11 @@ interface ConfigState {
   cdnSigned: boolean;
   allowSignup: boolean;
   googleClientId: string;
+  // Login with Raft: when raftClientId is set the login page shows a
+  // "Login with Raft" button that sends the user to
+  // <raftOauthBaseUrl>/login-with-raft/setup.
+  raftClientId: string;
+  raftOauthBaseUrl: string;
   daemonServerUrl: string;
   daemonAppUrl: string;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
@@ -40,6 +45,8 @@ interface ConfigState {
   setAuthConfig: (config: {
     allowSignup: boolean;
     googleClientId?: string;
+    raftClientId?: string;
+    raftOauthBaseUrl?: string;
     workspaceCreationDisabled?: boolean;
     vcsIntegrationAvailable?: boolean;
   }) => void;
@@ -58,6 +65,8 @@ export const configStore = createStore<ConfigState>((set) => ({
   cdnSigned: false,
   allowSignup: true,
   googleClientId: "",
+  raftClientId: "",
+  raftOauthBaseUrl: "",
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
@@ -70,9 +79,18 @@ export const configStore = createStore<ConfigState>((set) => ({
   setAuthConfig: ({
     allowSignup,
     googleClientId = "",
+    raftClientId = "",
+    raftOauthBaseUrl = "",
     workspaceCreationDisabled = false,
     vcsIntegrationAvailable = false,
-  }) => set({ allowSignup, googleClientId, workspaceCreationDisabled, vcsIntegrationAvailable }),
+  }) => set({
+    allowSignup,
+    googleClientId,
+    raftClientId,
+    raftOauthBaseUrl,
+    workspaceCreationDisabled,
+    vcsIntegrationAvailable,
+  }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
   setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),
