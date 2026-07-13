@@ -266,26 +266,35 @@ func (h *Handler) findOrCreateRaftUser(ctx context.Context, info raftUserInfo) (
 		return db.User{}, false, err
 	}
 
-	// Give the new Raft principal a personal workspace (owner membership +
-	// onboarded) so it has an immediate home to list issues and publish tasks
-	// in — mirroring the normal onboarding flow's first-workspace creation.
-	// The slug is derived deterministically from the Raft sub, so it is stable
-	// across logins and collision-free across principals.
-	wsName := raftWorkspaceName(info)
-	ws, err := qtx.CreateWorkspace(ctx, db.CreateWorkspaceParams{
-		Name:        wsName,
-		Slug:        raftWorkspaceSlug(info),
-		IssuePrefix: generateIssuePrefix(wsName),
-	})
+	// Login = joining this Raft server's shared Multica workspace (contract:
+	// Multica workspace ≡ Raft server). The first principal from a server
+	// creates + owns the workspace; later principals from the same server join
+	// it as members. Membership is added only for principals that actually log
+	// in — Multica does not mirror the full Raft member list.
+	ws, role, err := resolveServerWorkspace(ctx, qtx, info)
 	if err != nil {
 		return db.User{}, false, err
 	}
 	if _, err = qtx.CreateMember(ctx, db.CreateMemberParams{
 		WorkspaceID: ws.ID,
 		UserID:      created.ID,
-		Role:        "owner",
+		Role:        role,
 	}); err != nil {
 		return db.User{}, false, err
+	}
+
+	// A Raft agent additionally becomes a first-class external agent in the
+	// workspace: executed on Raft, not by Multica (runtime_mode='external',
+	// runtime_id NULL, external_ref back to the Raft agent).
+	if raftPrincipalType(info.Type) == "agent" {
+		if _, err = qtx.CreateExternalAgent(ctx, db.CreateExternalAgentParams{
+			WorkspaceID:      ws.ID,
+			Name:             raftDisplayName(info),
+			ExternalServerID: raftText(info.ServerID),
+			ExternalAgentID:  raftText(info.Sub),
+		}); err != nil {
+			return db.User{}, false, err
+		}
 	}
 	// Use the onboarded row as the returned user so the login response reflects
 	// the committed onboarded state (not the pre-mark CreateUser snapshot).
@@ -300,25 +309,54 @@ func (h *Handler) findOrCreateRaftUser(ctx context.Context, info raftUserInfo) (
 	return onboarded, true, nil
 }
 
-// raftWorkspaceName / raftWorkspaceSlug derive a stable personal-workspace
-// identity for a Raft principal. The slug uses the Raft sub so it is unique per
-// principal and identical across that principal's logins.
-func raftWorkspaceName(info raftUserInfo) string {
-	return raftDisplayName(info) + " Workspace"
+// resolveServerWorkspace returns the Multica workspace for the Raft server the
+// principal belongs to, creating it on first sight. role is "owner" when this
+// call created the workspace, else "member" (the joining role). Runs inside the
+// caller's transaction (qtx).
+func resolveServerWorkspace(ctx context.Context, qtx *db.Queries, info raftUserInfo) (db.Workspace, string, error) {
+	slug := raftServerWorkspaceSlug(info)
+	ws, err := qtx.GetWorkspaceBySlug(ctx, slug)
+	if err == nil {
+		return ws, "member", nil
+	}
+	if !isNotFound(err) {
+		return db.Workspace{}, "", err
+	}
+	name := raftServerWorkspaceName(info)
+	created, err := qtx.CreateWorkspace(ctx, db.CreateWorkspaceParams{
+		Name:        name,
+		Slug:        slug,
+		IssuePrefix: generateIssuePrefix(name),
+	})
+	if err != nil {
+		return db.Workspace{}, "", err
+	}
+	return created, "owner", nil
 }
 
-func raftWorkspaceSlug(info raftUserInfo) string {
-	base := slugifyRaft(info.PreferredUsername)
+// raftServerWorkspaceName / raftServerWorkspaceSlug derive a stable workspace
+// identity from the Raft SERVER (not the principal), so every human and agent
+// from one server converges on the same Multica workspace.
+func raftServerWorkspaceName(info raftUserInfo) string {
+	base := strings.TrimSpace(info.ServerSlug)
 	if base == "" {
 		base = "raft"
 	}
-	suffix := slugifyRaft(info.Sub)
+	return base + " (Raft)"
+}
+
+func raftServerWorkspaceSlug(info raftUserInfo) string {
+	base := slugifyRaft(info.ServerSlug)
+	if base == "" {
+		base = "raft"
+	}
+	suffix := slugifyRaft(info.ServerID)
 	suffix = strings.ReplaceAll(suffix, "-", "")
 	if len(suffix) > 8 {
 		suffix = suffix[:8]
 	}
 	if suffix == "" {
-		suffix = "ws"
+		suffix = "srv"
 	}
 	return base + "-" + suffix
 }
