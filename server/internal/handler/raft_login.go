@@ -287,14 +287,17 @@ func (h *Handler) findOrCreateRaftUser(ctx context.Context, info raftUserInfo) (
 	}); err != nil {
 		return db.User{}, false, err
 	}
-	if _, err = qtx.MarkUserOnboarded(ctx, created.ID); err != nil {
+	// Use the onboarded row as the returned user so the login response reflects
+	// the committed onboarded state (not the pre-mark CreateUser snapshot).
+	onboarded, err := qtx.MarkUserOnboarded(ctx, created.ID)
+	if err != nil {
 		return db.User{}, false, err
 	}
 
 	if err = tx.Commit(ctx); err != nil {
 		return db.User{}, false, err
 	}
-	return created, true, nil
+	return onboarded, true, nil
 }
 
 // raftWorkspaceName / raftWorkspaceSlug derive a stable personal-workspace
