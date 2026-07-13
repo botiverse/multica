@@ -16,3 +16,12 @@ INSERT INTO agent (
     $1, $2, 'external', 'raft', $3, $4, 'idle', 'workspace'
 )
 RETURNING *;
+
+-- name: SyncRaftWorkspaceName :exec
+UPDATE workspace SET name = $2, updated_at = now() WHERE id = $1;
+
+-- name: SyncExternalAgentName :exec
+UPDATE agent SET name = sqlc.arg(name), updated_at = now()
+WHERE runtime_mode = 'external'
+  AND external_server_id = sqlc.arg(external_server_id)
+  AND external_agent_id = sqlc.arg(external_agent_id);

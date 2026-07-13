@@ -73,6 +73,20 @@ func (q *Queries) GetRaftIdentity(ctx context.Context, arg GetRaftIdentityParams
 	return i, err
 }
 
+const syncRaftUserName = `-- name: SyncRaftUserName :exec
+UPDATE "user" SET name = $2, updated_at = now() WHERE id = $1
+`
+
+type SyncRaftUserNameParams struct {
+	ID   pgtype.UUID `json:"id"`
+	Name string      `json:"name"`
+}
+
+func (q *Queries) SyncRaftUserName(ctx context.Context, arg SyncRaftUserNameParams) error {
+	_, err := q.db.Exec(ctx, syncRaftUserName, arg.ID, arg.Name)
+	return err
+}
+
 const touchRaftIdentity = `-- name: TouchRaftIdentity :exec
 UPDATE raft_identity
 SET raft_username = $2,

@@ -46,6 +46,7 @@ type raftUserInfo struct {
 	Picture           string `json:"picture"`
 	ServerID          string `json:"server_id"`
 	ServerSlug        string `json:"server_slug"`
+	ServerName        string `json:"server_name"`
 	ServerRole        string `json:"server_role"`
 }
 
@@ -219,28 +220,8 @@ func (h *Handler) fetchRaftUserInfo(ctx context.Context, baseURL, accessToken st
 // holds without inventing a real address) plus the link row in one transaction.
 // isNew reports whether the user was created on this call.
 func (h *Handler) findOrCreateRaftUser(ctx context.Context, info raftUserInfo) (user db.User, isNew bool, err error) {
-	existing, err := h.Queries.GetRaftIdentity(ctx, db.GetRaftIdentityParams{
-		RaftServerID: info.ServerID,
-		RaftSub:      info.Sub,
-	})
-	if err == nil {
-		// Known principal: refresh mutable display fields, return the user.
-		_ = h.Queries.TouchRaftIdentity(ctx, db.TouchRaftIdentityParams{
-			ID:            existing.ID,
-			RaftUsername:  raftText(info.PreferredUsername),
-			PrincipalType: raftPrincipalType(info.Type),
-		})
-		u, gerr := h.Queries.GetUser(ctx, existing.UserID)
-		if gerr != nil {
-			return db.User{}, false, gerr
-		}
-		return u, false, nil
-	}
-	if !isNotFound(err) {
-		return db.User{}, false, err
-	}
+	isAgent := raftPrincipalType(info.Type) == "agent"
 
-	// First sight: create the user + link atomically.
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		return db.User{}, false, err
@@ -248,65 +229,117 @@ func (h *Handler) findOrCreateRaftUser(ctx context.Context, info raftUserInfo) (
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
 
-	created, err := qtx.CreateUser(ctx, db.CreateUserParams{
-		Name:      raftDisplayName(info),
-		Email:     raftSyntheticEmail(info),
-		AvatarUrl: raftText(firstNonEmpty(info.AvatarURL, info.Picture)),
+	// 1. Resolve the user-principal for this Raft identity, creating it on first
+	// sight. raft_identity keys the mapping 1:1 by (server, sub).
+	existing, gerr := qtx.GetRaftIdentity(ctx, db.GetRaftIdentityParams{
+		RaftServerID: info.ServerID,
+		RaftSub:      info.Sub,
 	})
-	if err != nil {
-		return db.User{}, false, err
-	}
-	if _, err = qtx.CreateRaftIdentity(ctx, db.CreateRaftIdentityParams{
-		UserID:        created.ID,
-		RaftServerID:  info.ServerID,
-		RaftSub:       info.Sub,
-		PrincipalType: raftPrincipalType(info.Type),
-		RaftUsername:  raftText(info.PreferredUsername),
-	}); err != nil {
-		return db.User{}, false, err
+	switch {
+	case gerr == nil:
+		if user, err = qtx.GetUser(ctx, existing.UserID); err != nil {
+			return db.User{}, false, err
+		}
+		_ = qtx.TouchRaftIdentity(ctx, db.TouchRaftIdentityParams{
+			ID:            existing.ID,
+			RaftUsername:  raftText(info.PreferredUsername),
+			PrincipalType: raftPrincipalType(info.Type),
+		})
+	case isNotFound(gerr):
+		if user, err = qtx.CreateUser(ctx, db.CreateUserParams{
+			Name:      raftDisplayName(info),
+			Email:     raftSyntheticEmail(info),
+			AvatarUrl: raftText(firstNonEmpty(info.AvatarURL, info.Picture)),
+		}); err != nil {
+			return db.User{}, false, err
+		}
+		if _, err = qtx.CreateRaftIdentity(ctx, db.CreateRaftIdentityParams{
+			UserID:        user.ID,
+			RaftServerID:  info.ServerID,
+			RaftSub:       info.Sub,
+			PrincipalType: raftPrincipalType(info.Type),
+			RaftUsername:  raftText(info.PreferredUsername),
+		}); err != nil {
+			return db.User{}, false, err
+		}
+		isNew = true
+	default:
+		return db.User{}, false, gerr
 	}
 
-	// Login = joining this Raft server's shared Multica workspace (contract:
-	// Multica workspace ≡ Raft server). The first principal from a server
-	// creates + owns the workspace; later principals from the same server join
-	// it as members. Membership is added only for principals that actually log
-	// in — Multica does not mirror the full Raft member list.
+	// 2. Login = join this Raft server's shared workspace (contract: workspace ≡
+	// server). First principal creates + owns it; later principals join as
+	// members. Membership is added only for principals that actually log in —
+	// Multica does not mirror the full Raft member list.
 	ws, role, err := resolveServerWorkspace(ctx, qtx, info)
 	if err != nil {
 		return db.User{}, false, err
 	}
-	if _, err = qtx.CreateMember(ctx, db.CreateMemberParams{
+	if _, merr := qtx.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+		UserID:      user.ID,
 		WorkspaceID: ws.ID,
-		UserID:      created.ID,
-		Role:        role,
-	}); err != nil {
+	}); isNotFound(merr) {
+		if _, err = qtx.CreateMember(ctx, db.CreateMemberParams{
+			WorkspaceID: ws.ID,
+			UserID:      user.ID,
+			Role:        role,
+		}); err != nil {
+			return db.User{}, false, err
+		}
+	} else if merr != nil {
+		return db.User{}, false, merr
+	}
+
+	// 3. A Raft agent is additionally a first-class external agent in the
+	// workspace: executed on Raft, not Multica (runtime_mode='external',
+	// runtime_id NULL, external_ref back to the Raft agent).
+	if isAgent {
+		if _, aerr := qtx.GetExternalAgentByRef(ctx, db.GetExternalAgentByRefParams{
+			ExternalServerID: raftText(info.ServerID),
+			ExternalAgentID:  raftText(info.Sub),
+		}); isNotFound(aerr) {
+			if _, err = qtx.CreateExternalAgent(ctx, db.CreateExternalAgentParams{
+				WorkspaceID:      ws.ID,
+				Name:             raftDisplayName(info),
+				ExternalServerID: raftText(info.ServerID),
+				ExternalAgentID:  raftText(info.Sub),
+			}); err != nil {
+				return db.User{}, false, err
+			}
+		} else if aerr != nil {
+			return db.User{}, false, aerr
+		}
+	}
+
+	if _, err = qtx.MarkUserOnboarded(ctx, user.ID); err != nil {
 		return db.User{}, false, err
 	}
 
-	// A Raft agent additionally becomes a first-class external agent in the
-	// workspace: executed on Raft, not by Multica (runtime_mode='external',
-	// runtime_id NULL, external_ref back to the Raft agent).
-	if raftPrincipalType(info.Type) == "agent" {
-		if _, err = qtx.CreateExternalAgent(ctx, db.CreateExternalAgentParams{
-			WorkspaceID:      ws.ID,
-			Name:             raftDisplayName(info),
+	// 4. Names are owned by Raft — sync them on every login so a rename on the
+	// Raft side (server name, human name, agent name) propagates into Multica
+	// with no configuration on the Multica side.
+	displayName := raftDisplayName(info)
+	if err = qtx.SyncRaftUserName(ctx, db.SyncRaftUserNameParams{ID: user.ID, Name: displayName}); err != nil {
+		return db.User{}, false, err
+	}
+	if err = qtx.SyncRaftWorkspaceName(ctx, db.SyncRaftWorkspaceNameParams{ID: ws.ID, Name: raftServerWorkspaceName(info)}); err != nil {
+		return db.User{}, false, err
+	}
+	if isAgent {
+		if err = qtx.SyncExternalAgentName(ctx, db.SyncExternalAgentNameParams{
+			Name:             displayName,
 			ExternalServerID: raftText(info.ServerID),
 			ExternalAgentID:  raftText(info.Sub),
 		}); err != nil {
 			return db.User{}, false, err
 		}
 	}
-	// Use the onboarded row as the returned user so the login response reflects
-	// the committed onboarded state (not the pre-mark CreateUser snapshot).
-	onboarded, err := qtx.MarkUserOnboarded(ctx, created.ID)
-	if err != nil {
-		return db.User{}, false, err
-	}
 
 	if err = tx.Commit(ctx); err != nil {
 		return db.User{}, false, err
 	}
-	return onboarded, true, nil
+	user.Name = displayName // reflect the just-synced name in the returned user
+	return user, isNew, nil
 }
 
 // resolveServerWorkspace returns the Multica workspace for the Raft server the
@@ -338,11 +371,13 @@ func resolveServerWorkspace(ctx context.Context, qtx *db.Queries, info raftUserI
 // identity from the Raft SERVER (not the principal), so every human and agent
 // from one server converges on the same Multica workspace.
 func raftServerWorkspaceName(info raftUserInfo) string {
-	base := strings.TrimSpace(info.ServerSlug)
-	if base == "" {
-		base = "raft"
+	if n := strings.TrimSpace(info.ServerName); n != "" {
+		return n
 	}
-	return base + " (Raft)"
+	if s := strings.TrimSpace(info.ServerSlug); s != "" {
+		return s
+	}
+	return "Raft"
 }
 
 func raftServerWorkspaceSlug(info raftUserInfo) string {
