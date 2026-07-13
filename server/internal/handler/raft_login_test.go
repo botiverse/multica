@@ -21,18 +21,20 @@ func TestSlugifyRaft(t *testing.T) {
 	}
 }
 
-func TestRaftWorkspaceSlug(t *testing.T) {
-	// Stable + collision-free across principals: derived from username + sub.
-	s1 := raftWorkspaceSlug(raftUserInfo{PreferredUsername: "Lincan", Sub: "abc123de-f456-7890-1234-567890abcdef"})
-	if s1 != "lincan-abc123de" {
-		t.Errorf("got %q, want lincan-abc123de", s1)
+func TestRaftServerWorkspaceSlug(t *testing.T) {
+	// Workspace identity comes from the Raft SERVER, so all principals from the
+	// same server converge on the same slug regardless of who logs in.
+	a := raftServerWorkspaceSlug(raftUserInfo{ServerSlug: "dev", ServerID: "abc123de-f456-7890-1234-567890abcdef"})
+	if a != "dev-abc123de" {
+		t.Errorf("got %q, want dev-abc123de", a)
 	}
-	// Same principal -> identical slug (idempotent).
-	if s2 := raftWorkspaceSlug(raftUserInfo{PreferredUsername: "Lincan", Sub: "abc123de-f456-7890-1234-567890abcdef"}); s2 != s1 {
-		t.Errorf("non-deterministic slug: %q != %q", s2, s1)
+	// Different principals, same server -> same workspace slug.
+	b := raftServerWorkspaceSlug(raftUserInfo{ServerSlug: "dev", ServerID: "abc123de-f456-7890-1234-567890abcdef", Sub: "someone-else"})
+	if b != a {
+		t.Errorf("same server should map to same workspace: %q != %q", b, a)
 	}
-	// Empty username falls back to "raft" but stays unique via sub.
-	if s := raftWorkspaceSlug(raftUserInfo{PreferredUsername: "", Sub: "99998888-0000-0000-0000-000000000000"}); s != "raft-99998888" {
+	// Empty server slug falls back to "raft" but stays unique via server id.
+	if s := raftServerWorkspaceSlug(raftUserInfo{ServerSlug: "", ServerID: "99998888-0000-0000-0000-000000000000"}); s != "raft-99998888" {
 		t.Errorf("got %q, want raft-99998888", s)
 	}
 }
