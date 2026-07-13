@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -8,6 +11,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/auth"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // This file turns Multica into a "Raft App": it serves the agent-behavior
@@ -118,6 +122,20 @@ func (h *Handler) RaftAgentManifest(w http.ResponseWriter, r *http.Request) {
 					"agents": {Type: "array", Description: "Agents in the workspace."},
 				},
 			},
+			{
+				Name:        "create-issue",
+				Description: "Publish a task/issue into a workspace. Pass workspace_slug from list-workspaces.",
+				Endpoint:    raftManifestEndpoint{Method: "POST", Path: "/api/raft/issues"},
+				Parameters: map[string]raftManifestField{
+					"workspace_slug": {Type: "string", Description: "Target workspace slug.", Required: true},
+					"title":          {Type: "string", Description: "Issue title.", Required: true},
+					"description":    {Type: "string", Description: "Issue description (optional)."},
+					"priority":       {Type: "string", Description: "none|low|medium|high|urgent (optional)."},
+				},
+				Returns: map[string]raftManifestField{
+					"identifier": {Type: "string", Description: "The created issue identifier, e.g. LIN-1."},
+				},
+			},
 		},
 	}
 	writeJSON(w, http.StatusOK, manifest)
@@ -171,4 +189,68 @@ func (h *Handler) RaftCallback(w http.ResponseWriter, r *http.Request) {
 		"ok":   true,
 		"user": userToResponse(user),
 	})
+}
+
+// RaftCreateIssueRequest is CreateIssueRequest plus the workspace_slug the Raft
+// integration-invoke flow passes in the body (that transport forwards params in
+// the JSON body, not as the X-Workspace-ID header or a query param).
+type RaftCreateIssueRequest struct {
+	WorkspaceSlug string `json:"workspace_slug"`
+	CreateIssueRequest
+}
+
+// RaftCreateIssue lets a Raft agent publish a task into a workspace it belongs
+// to, selecting the workspace by slug in the body. It resolves + authorizes the
+// workspace, then delegates to CreateIssue — rewriting the request so
+// CreateIssue's workspace resolver (query) and body decode both see the right
+// values — to reuse all of CreateIssue's validation and creation logic.
+func (h *Handler) RaftCreateIssue(w http.ResponseWriter, r *http.Request) {
+	creatorID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	var req RaftCreateIssueRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	slug := strings.TrimSpace(req.WorkspaceSlug)
+	if slug == "" {
+		writeError(w, http.StatusBadRequest, "workspace_slug is required")
+		return
+	}
+
+	ws, err := h.Queries.GetWorkspaceBySlug(r.Context(), slug)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "workspace not found")
+		return
+	}
+	userUUID, ok := parseUUIDOrBadRequest(w, creatorID, "user_id")
+	if !ok {
+		return
+	}
+	if _, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
+		UserID:      userUUID,
+		WorkspaceID: ws.ID,
+	}); err != nil {
+		writeError(w, http.StatusForbidden, "not a member of the target workspace")
+		return
+	}
+
+	// Reuse CreateIssue's full logic: re-encode just the issue fields as the
+	// body and put the resolved workspace on the query, where resolveWorkspaceID
+	// picks it up.
+	body, err := json.Marshal(req.CreateIssueRequest)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.ContentLength = int64(len(body))
+	q := r.URL.Query()
+	q.Set("workspace_id", uuidToString(ws.ID))
+	r.URL.RawQuery = q.Encode()
+
+	h.CreateIssue(w, r)
 }

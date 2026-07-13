@@ -1512,6 +1512,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// workspace context.
 		r.Get("/api/attachments/{id}/download", h.DownloadAttachment)
 
+		// Raft App agent bridge: authenticated, but resolves the workspace from
+		// the request body (integration-invoke can't set X-Workspace-ID), so it
+		// is not behind the workspace middleware.
+		r.Post("/api/raft/issues", h.RaftCreateIssue)
+
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
 			r.Post("/", h.CreateWorkspace)
