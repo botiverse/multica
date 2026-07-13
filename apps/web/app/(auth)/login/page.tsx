@@ -61,6 +61,8 @@ function LoginPageContent() {
   const qc = useQueryClient();
   const { t } = useT("auth");
   const googleClientId = useConfigStore((state) => state.googleClientId);
+  const raftClientId = useConfigStore((state) => state.raftClientId);
+  const raftOauthBaseUrl = useConfigStore((state) => state.raftOauthBaseUrl);
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
   const searchParams = useSearchParams();
@@ -234,7 +236,23 @@ function LoginPageContent() {
       }
       onTokenObtained={setLoggedInCookie}
       extra={
-        <span className="text-xs text-muted-foreground">
+        <>
+          {raftClientId && raftOauthBaseUrl ? (
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                const returnTo = `${window.location.origin}/auth/raft/callback`;
+                const url = `${raftOauthBaseUrl}/login-with-raft/setup?client_id=${encodeURIComponent(
+                  raftClientId,
+                )}&return_to=${encodeURIComponent(returnTo)}&scope=${encodeURIComponent("openid profile")}`;
+                window.location.href = url;
+              }}
+            >
+              Login with Raft
+            </Button>
+          ) : null}
+          <span className="text-xs text-muted-foreground">
           {t(($) => $.web.prefer_desktop)}{" "}
           <Link
             href="/download"
@@ -242,7 +260,8 @@ function LoginPageContent() {
           >
             {t(($) => $.web.download)}
           </Link>
-        </span>
+          </span>
+        </>
       }
     />
   );
