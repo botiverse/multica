@@ -13,3 +13,6 @@ SET raft_username = $2,
     principal_type = $3,
     updated_at = now()
 WHERE id = $1;
+
+-- name: SyncRaftUserName :exec
+UPDATE "user" SET name = $2, updated_at = now() WHERE id = $1;

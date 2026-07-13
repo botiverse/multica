@@ -122,3 +122,35 @@ func (q *Queries) GetExternalAgentByRef(ctx context.Context, arg GetExternalAgen
 	)
 	return i, err
 }
+
+const syncExternalAgentName = `-- name: SyncExternalAgentName :exec
+UPDATE agent SET name = $1, updated_at = now()
+WHERE runtime_mode = 'external'
+  AND external_server_id = $2
+  AND external_agent_id = $3
+`
+
+type SyncExternalAgentNameParams struct {
+	Name             string      `json:"name"`
+	ExternalServerID pgtype.Text `json:"external_server_id"`
+	ExternalAgentID  pgtype.Text `json:"external_agent_id"`
+}
+
+func (q *Queries) SyncExternalAgentName(ctx context.Context, arg SyncExternalAgentNameParams) error {
+	_, err := q.db.Exec(ctx, syncExternalAgentName, arg.Name, arg.ExternalServerID, arg.ExternalAgentID)
+	return err
+}
+
+const syncRaftWorkspaceName = `-- name: SyncRaftWorkspaceName :exec
+UPDATE workspace SET name = $2, updated_at = now() WHERE id = $1
+`
+
+type SyncRaftWorkspaceNameParams struct {
+	ID   pgtype.UUID `json:"id"`
+	Name string      `json:"name"`
+}
+
+func (q *Queries) SyncRaftWorkspaceName(ctx context.Context, arg SyncRaftWorkspaceNameParams) error {
+	_, err := q.db.Exec(ctx, syncRaftWorkspaceName, arg.ID, arg.Name)
+	return err
+}
