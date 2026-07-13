@@ -54,7 +54,20 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 			}
 
 			// Cookie-based auth requires CSRF validation for state-changing methods.
-			if fromCookie && !auth.ValidateCSRF(r) {
+			//
+			// The Raft App agent bridge (/api/raft/*) is exempt: it is a
+			// programmatic, server-to-server surface whose session is
+			// established by the Login-with-Raft OAuth callback, and the Raft
+			// `integration invoke` transport replays only the session cookie —
+			// it cannot compute the signed double-submit CSRF token. A browser
+			// is never the intended caller here.
+			// SECURITY FOLLOW-UP: this does expose these cookie-authed POSTs to
+			// CSRF for a *human* who signed in via Raft. Before this is used
+			// beyond internal/demo, harden it — e.g. mark the Raft session JWT
+			// with an agent claim and exempt only those, or authenticate the
+			// bridge with a Bearer PAT (CSRF-exempt by construction) instead of
+			// a cookie.
+			if fromCookie && !isRaftAgentBridge(r) && !auth.ValidateCSRF(r) {
 				slog.Debug("auth: CSRF validation failed", "path", r.URL.Path)
 				http.Error(w, `{"error":"CSRF validation failed"}`, http.StatusForbidden)
 				return
@@ -250,4 +263,11 @@ func extractToken(r *http.Request) (token string, fromCookie bool) {
 	}
 
 	return "", false
+}
+
+// isRaftAgentBridge reports whether the request targets the Raft App
+// agent-bridge surface, which is CSRF-exempt (see Auth). Kept as a narrow
+// path-prefix check so the exemption is auditable in one place.
+func isRaftAgentBridge(r *http.Request) bool {
+	return strings.HasPrefix(r.URL.Path, "/api/raft/")
 }
