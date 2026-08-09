@@ -50,6 +50,9 @@ type Agent struct {
 	PermissionMode        string      `json:"permission_mode"`
 	Kind                  string      `json:"kind"`
 	SystemKey             pgtype.Text `json:"system_key"`
+	Provider              pgtype.Text `json:"provider"`
+	ExternalServerID      pgtype.Text `json:"external_server_id"`
+	ExternalAgentID       pgtype.Text `json:"external_agent_id"`
 	DisabledRuntimeSkills []byte      `json:"disabled_runtime_skills"`
 	ServiceTier           pgtype.Text `json:"service_tier"`
 	StarterPrompts        []byte      `json:"starter_prompts"`
@@ -1187,6 +1190,17 @@ type QuickAction struct {
 	UseCount      int64              `json:"use_count"`
 	CreatedByType string             `json:"created_by_type"`
 	CreatedByID   pgtype.UUID        `json:"created_by_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RaftIdentity struct {
+	ID            pgtype.UUID        `json:"id"`
+	UserID        pgtype.UUID        `json:"user_id"`
+	RaftServerID  string             `json:"raft_server_id"`
+	RaftSub       string             `json:"raft_sub"`
+	PrincipalType string             `json:"principal_type"`
+	RaftUsername  pgtype.Text        `json:"raft_username"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }

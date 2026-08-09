@@ -188,7 +188,7 @@ func (h *Handler) RaftLogin(w http.ResponseWriter, r *http.Request) {
 		append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID))...)
 	writeJSON(w, http.StatusOK, LoginResponse{
 		Token: tokenString,
-		User:  userToResponse(user),
+		User:  h.userToResponse(user),
 	})
 }
 

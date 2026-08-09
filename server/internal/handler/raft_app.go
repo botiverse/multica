@@ -187,7 +187,7 @@ func (h *Handler) RaftCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":   true,
-		"user": userToResponse(user),
+		"user": h.userToResponse(user),
 	})
 }
 
