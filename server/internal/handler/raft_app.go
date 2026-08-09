@@ -372,11 +372,20 @@ func (h *Handler) callerAsAssignee(r *http.Request, callerID string, ws db.Works
 
 var errRaftAgentNotInWorkspace = errors.New("raft agent is not a member of this workspace")
 
-// delegateIssueUpdate re-encodes body as an UpdateIssueRequest and hands the
-// request to UpdateIssue, which owns all the real update logic (events,
-// timeline, notifications). Same delegation shape as RaftCreateIssue.
-func (h *Handler) delegateIssueUpdate(w http.ResponseWriter, r *http.Request, ws db.Workspace, update UpdateIssueRequest) {
-	body, err := json.Marshal(update)
+// delegateIssueUpdate hands the request to UpdateIssue, which owns all the real
+// update logic (events, timeline, notifications). Same delegation shape as
+// RaftCreateIssue.
+//
+// It marshals ONLY the fields being changed, rather than the whole
+// UpdateIssueRequest. Those fields are pointers WITHOUT omitempty, so encoding
+// the struct emits `"assignee_type":null,"assignee_id":null` for a
+// status-only update — and UpdateIssue reads an explicit null as "clear this
+// field". Sending the struct therefore silently UNASSIGNED the issue on every
+// status change: a worker that claimed a task lost it the moment it moved the
+// task to in_progress. Caught by the second status call failing the
+// assignee-or-creator check that the first call had just invalidated.
+func (h *Handler) delegateIssueUpdate(w http.ResponseWriter, r *http.Request, ws db.Workspace, fields map[string]any) {
+	body, err := json.Marshal(fields)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -406,9 +415,9 @@ func (h *Handler) RaftClaimIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "caller cannot be assigned in this workspace")
 		return
 	}
-	h.delegateIssueUpdate(w, r, ws, UpdateIssueRequest{
-		AssigneeType: &assigneeType,
-		AssigneeID:   &assigneeID,
+	h.delegateIssueUpdate(w, r, ws, map[string]any{
+		"assignee_type": assigneeType,
+		"assignee_id":   assigneeID,
 	})
 }
 
@@ -458,6 +467,5 @@ func (h *Handler) RaftSetIssueStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := req.Status
-	h.delegateIssueUpdate(w, r, ws, UpdateIssueRequest{Status: &status})
+	h.delegateIssueUpdate(w, r, ws, map[string]any{"status": req.Status})
 }

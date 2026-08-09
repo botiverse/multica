@@ -68,6 +68,30 @@ func raftAuthConfig() (clientID, clientSecret, baseURL string, ok bool) {
 	return clientID, clientSecret, baseURL, clientID != "" && clientSecret != "" && baseURL != ""
 }
 
+
+// raftTokenExchange posts one grant attempt to Raft's token endpoint and
+// returns the raw body plus status, so the caller can try a second grant
+// without duplicating the request plumbing.
+func (h *Handler) raftTokenExchange(ctx context.Context, baseURL, clientID, clientSecret string, form url.Values) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		baseURL+"/api/oauth/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(clientID, clientSecret)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return body, resp.StatusCode, nil
+}
+
 // authenticateRaft runs the shared Login-with-Raft exchange: swap the one-time
 // code for a Raft access token, fetch identity claims, and resolve them to a
 // Multica user-principal (creating it + the raft_identity link on first sight).
@@ -81,36 +105,47 @@ func (h *Handler) authenticateRaft(ctx context.Context, code, redirectURI string
 		redirectURI = os.Getenv("RAFT_OAUTH_REDIRECT_URI")
 	}
 
-	// 1. Exchange the authorization code for a Raft access token. Client
+	// 1. Exchange the one-time handoff for a Raft access token. Client
 	// credentials go in the Authorization header (HTTP Basic), which Raft's
 	// token endpoint accepts.
-	form := url.Values{
-		"grant_type":   {"authorization_code"},
-		"code":         {code},
-		"redirect_uri": {redirectURI},
-	}
-	tokenReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		baseURL+"/api/oauth/token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return db.User{}, false, &raftAuthError{http.StatusInternalServerError, "internal error"}
-	}
-	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	tokenReq.SetBasicAuth(clientID, clientSecret)
-
-	tokenResp, err := http.DefaultClient.Do(tokenReq)
+	//
+	// TWO GRANTS, ONE ENTRY POINT. A human arrives from the browser consent
+	// page with an authorization_code. An AGENT never uses that page — Raft's
+	// own consent screen tells agents not to — it arrives via Agent Login,
+	// whose handoff is an agent-request id redeemed with a different grant
+	// type. Both land on the same callback carrying the same `code` query
+	// param, and the two ids are indistinguishable by shape, so we cannot
+	// branch on the value. We try the human grant first (the common case) and
+	// fall back to the agent grant only when Raft rejects it. Supporting just
+	// the first grant is why agents could not get in at all.
+	tokenBody, tokenStatus, err := h.raftTokenExchange(ctx, baseURL, clientID, clientSecret,
+		url.Values{
+			"grant_type":   {"authorization_code"},
+			"code":         {code},
+			"redirect_uri": {redirectURI},
+		})
 	if err != nil {
 		slog.Error("raft oauth token exchange failed", "error", err)
 		return db.User{}, false, &raftAuthError{http.StatusBadGateway, "failed to exchange code with Raft"}
 	}
-	defer tokenResp.Body.Close()
-
-	tokenBody, err := io.ReadAll(tokenResp.Body)
-	if err != nil {
-		return db.User{}, false, &raftAuthError{http.StatusBadGateway, "failed to read Raft token response"}
-	}
-	if tokenResp.StatusCode != http.StatusOK {
-		slog.Error("raft oauth token exchange returned error", "status", tokenResp.StatusCode, "body", string(tokenBody))
-		return db.User{}, false, &raftAuthError{http.StatusBadRequest, "failed to exchange code with Raft"}
+	if tokenStatus != http.StatusOK {
+		agentBody, agentStatus, agentErr := h.raftTokenExchange(ctx, baseURL, clientID, clientSecret,
+			url.Values{
+				"grant_type": {"urn:slock:grant-type:agent_request"},
+				"requestId":  {code},
+			})
+		if agentErr == nil && agentStatus == http.StatusOK {
+			tokenBody, tokenStatus = agentBody, agentStatus
+		} else {
+			// Report the HUMAN grant's failure: it is the expected path, so its
+			// error is the one that explains a genuine misconfiguration. The
+			// agent attempt is a fallback, and surfacing its error instead would
+			// send people debugging the wrong flow.
+			slog.Error("raft oauth token exchange returned error",
+				"status", tokenStatus, "body", string(tokenBody),
+				"agent_fallback_status", agentStatus)
+			return db.User{}, false, &raftAuthError{http.StatusBadRequest, "failed to exchange code with Raft"}
+		}
 	}
 
 	var rToken raftTokenResponse
@@ -298,13 +333,26 @@ func (h *Handler) findOrCreateRaftUser(ctx context.Context, info raftUserInfo) (
 			ExternalServerID: raftText(info.ServerID),
 			ExternalAgentID:  raftText(info.Sub),
 		}); isNotFound(aerr) {
-			if _, err = qtx.CreateExternalAgent(ctx, db.CreateExternalAgentParams{
+			newAgent, cerr := qtx.CreateExternalAgent(ctx, db.CreateExternalAgentParams{
 				WorkspaceID:      ws.ID,
 				Name:             raftDisplayName(info),
 				ExternalServerID: raftText(info.ServerID),
 				ExternalAgentID:  raftText(info.Sub),
-			}); err != nil {
-				return db.User{}, false, err
+			})
+			if cerr != nil {
+				return db.User{}, false, cerr
+			}
+			// permission_mode='public_to' is only half the contract: canInvokeAgent
+			// reads the invocation-target list, so without a target the agent is
+			// public to nobody and remains unassignable. Migration 130 pairs
+			// visibility='workspace' with exactly one workspace target; do the same
+			// here so an agent that joined a workspace can actually be given work.
+			if terr := qtx.CreateAgentInvocationTarget(ctx, db.CreateAgentInvocationTargetParams{
+				AgentID:    newAgent.ID,
+				TargetType: "workspace",
+				TargetID:   ws.ID,
+			}); terr != nil {
+				return db.User{}, false, terr
 			}
 		} else if aerr != nil {
 			return db.User{}, false, aerr
