@@ -18,7 +18,7 @@ INSERT INTO agent (
 ) VALUES (
     $1, $2, 'external', 'raft', $3, $4, 'idle', 'workspace'
 )
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, provider, external_server_id, external_agent_id, disabled_runtime_skills, service_tier
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, provider, external_server_id, external_agent_id
 `
 
 type CreateExternalAgentParams struct {
@@ -67,17 +67,17 @@ func (q *Queries) CreateExternalAgent(ctx context.Context, arg CreateExternalAge
 		&i.PermissionMode,
 		&i.Kind,
 		&i.SystemKey,
+		&i.DisabledRuntimeSkills,
+		&i.ServiceTier,
 		&i.Provider,
 		&i.ExternalServerID,
 		&i.ExternalAgentID,
-		&i.DisabledRuntimeSkills,
-		&i.ServiceTier,
 	)
 	return i, err
 }
 
 const getExternalAgentByRef = `-- name: GetExternalAgentByRef :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, provider, external_server_id, external_agent_id, disabled_runtime_skills, service_tier FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, provider, external_server_id, external_agent_id FROM agent
 WHERE runtime_mode = 'external'
   AND external_server_id = $1
   AND external_agent_id = $2
@@ -118,11 +118,11 @@ func (q *Queries) GetExternalAgentByRef(ctx context.Context, arg GetExternalAgen
 		&i.PermissionMode,
 		&i.Kind,
 		&i.SystemKey,
+		&i.DisabledRuntimeSkills,
+		&i.ServiceTier,
 		&i.Provider,
 		&i.ExternalServerID,
 		&i.ExternalAgentID,
-		&i.DisabledRuntimeSkills,
-		&i.ServiceTier,
 	)
 	return i, err
 }

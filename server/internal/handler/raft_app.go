@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -87,7 +90,7 @@ func (h *Handler) RaftAgentManifest(w http.ResponseWriter, r *http.Request) {
 		Schema:      "raft-agent-manifest.v0",
 		Service:     "multica",
 		Name:        "Multica",
-		Description: "Multica task management: view workspaces, issues, and agents, and publish tasks as a Raft agent.",
+		Description: "Multica task management: view workspaces, issues, and agents; publish tasks; and take and progress your own work as a Raft agent.",
 		AppOrigin:   origin,
 		Execution:   raftManifestExec{Mode: "http_api", BaseURL: origin},
 		Auth:        raftManifestAuth{Type: "login_with_raft"},
@@ -134,6 +137,31 @@ func (h *Handler) RaftAgentManifest(w http.ResponseWriter, r *http.Request) {
 				},
 				Returns: map[string]raftManifestField{
 					"identifier": {Type: "string", Description: "The created issue identifier, e.g. LIN-1."},
+				},
+			},
+			{
+				Name:        "claim-issue",
+				Description: "Take an issue as your own work. The server assigns it to YOU; there is no assignee parameter, so this cannot be used to hand work to someone else.",
+				Endpoint:    raftManifestEndpoint{Method: "POST", Path: "/api/raft/issues/{id}/claim"},
+				Parameters: map[string]raftManifestField{
+					"id":             {Type: "string", Description: "Issue id or identifier, e.g. LIN-1.", Required: true},
+					"workspace_slug": {Type: "string", Description: "Target workspace slug.", Required: true},
+				},
+				Returns: map[string]raftManifestField{
+					"issue": {Type: "object", Description: "The updated issue, now assigned to the caller."},
+				},
+			},
+			{
+				Name:        "set-issue-status",
+				Description: "Move an issue you own along. Allowed when you are its assignee or its creator; changing someone else's issue is a role capability and is not exposed yet.",
+				Endpoint:    raftManifestEndpoint{Method: "POST", Path: "/api/raft/issues/{id}/status"},
+				Parameters: map[string]raftManifestField{
+					"id":             {Type: "string", Description: "Issue id or identifier, e.g. LIN-1.", Required: true},
+					"workspace_slug": {Type: "string", Description: "Target workspace slug.", Required: true},
+					"status":         {Type: "string", Description: "Target status, e.g. backlog|todo|in_progress|done|canceled.", Required: true},
+				},
+				Returns: map[string]raftManifestField{
+					"issue": {Type: "object", Description: "The updated issue."},
 				},
 			},
 		},
@@ -253,4 +281,183 @@ func (h *Handler) RaftCreateIssue(w http.ResponseWriter, r *http.Request) {
 	r.URL.RawQuery = q.Encode()
 
 	h.CreateIssue(w, r)
+}
+
+// --- Self-scoped work actions (Layer 1) ----------------------------------
+//
+// These let a Raft agent do its own work: take a task, move it along, talk
+// about it. They deliberately do NOT let an agent act on anyone else's behalf.
+//
+// WHY SELF-SCOPED, and why not just expose PUT /api/issues/{id}:
+// that endpoint accepts assignee_type/assignee_id, so handing it to agents
+// would let any agent assign work to any other agent or member. "Who may
+// manage whom" is a ROLE question, and the role gate does not exist yet — it
+// is Step 3, which reads server_role through from Raft. Shipping a generic
+// update action now would grant manage-others authority before the gate that
+// is supposed to govern it, and it would be very hard to take back once agents
+// depend on it. So: the server decides the assignee (always the caller), and
+// status changes are limited to work the caller already owns.
+//
+// When Step 3 lands, an assign-others action can be added behind the role gate.
+
+// raftIssueScope is the workspace_slug every Raft action carries, because the
+// agent addresses workspaces by slug rather than by internal id.
+type raftIssueScope struct {
+	WorkspaceSlug string `json:"workspace_slug"`
+}
+
+// resolveRaftWorkspace validates the slug and the caller's membership, and
+// returns the workspace. Mirrors RaftCreateIssue's preamble.
+func (h *Handler) resolveRaftWorkspace(w http.ResponseWriter, r *http.Request, slug string) (db.Workspace, string, bool) {
+	callerID, ok := requireUserID(w, r)
+	if !ok {
+		return db.Workspace{}, "", false
+	}
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		writeError(w, http.StatusBadRequest, "workspace_slug is required")
+		return db.Workspace{}, "", false
+	}
+	ws, err := h.Queries.GetWorkspaceBySlug(r.Context(), slug)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "workspace not found")
+		return db.Workspace{}, "", false
+	}
+	callerUUID, ok := parseUUIDOrBadRequest(w, callerID, "user_id")
+	if !ok {
+		return db.Workspace{}, "", false
+	}
+	if _, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
+		UserID:      callerUUID,
+		WorkspaceID: ws.ID,
+	}); err != nil {
+		writeError(w, http.StatusForbidden, "not a member of the target workspace")
+		return db.Workspace{}, "", false
+	}
+	return ws, callerID, true
+}
+
+// callerAsAssignee answers "who is the caller, as an assignee?" — the server
+// resolves this so the caller can never name someone else. A Raft agent that
+// has joined this workspace is represented by an external agent row, so it
+// assigns as that agent; a human Raft principal assigns as a member.
+func (h *Handler) callerAsAssignee(r *http.Request, callerID string, ws db.Workspace) (string, string, error) {
+	callerUUID, err := util.ParseUUID(callerID)
+	if err != nil {
+		return "", "", err
+	}
+	ident, err := h.Queries.GetRaftIdentityByUserID(r.Context(), callerUUID)
+	if err != nil {
+		// Not a Raft principal (or no identity row): fall back to member.
+		return "member", callerID, nil
+	}
+	if ident.PrincipalType != "agent" {
+		return "member", callerID, nil
+	}
+	agent, err := h.Queries.GetExternalAgentByRef(r.Context(), db.GetExternalAgentByRefParams{
+		ExternalServerID: raftText(ident.RaftServerID),
+		ExternalAgentID:  raftText(ident.RaftSub),
+	})
+	if err != nil {
+		// Agent principal with no external agent row in ANY workspace.
+		return "member", callerID, nil
+	}
+	if uuidToString(agent.WorkspaceID) != uuidToString(ws.ID) {
+		// The agent exists, but not in this workspace: assigning it here would
+		// cross a workspace boundary. Fail rather than silently widen scope.
+		return "", "", errRaftAgentNotInWorkspace
+	}
+	return "agent", uuidToString(agent.ID), nil
+}
+
+var errRaftAgentNotInWorkspace = errors.New("raft agent is not a member of this workspace")
+
+// delegateIssueUpdate re-encodes body as an UpdateIssueRequest and hands the
+// request to UpdateIssue, which owns all the real update logic (events,
+// timeline, notifications). Same delegation shape as RaftCreateIssue.
+func (h *Handler) delegateIssueUpdate(w http.ResponseWriter, r *http.Request, ws db.Workspace, update UpdateIssueRequest) {
+	body, err := json.Marshal(update)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.ContentLength = int64(len(body))
+	q := r.URL.Query()
+	q.Set("workspace_id", uuidToString(ws.ID))
+	r.URL.RawQuery = q.Encode()
+	h.UpdateIssue(w, r)
+}
+
+// RaftClaimIssue assigns an issue to the CALLER. There is no assignee
+// parameter on purpose — see the self-scoped note above.
+func (h *Handler) RaftClaimIssue(w http.ResponseWriter, r *http.Request) {
+	var req raftIssueScope
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	ws, callerID, ok := h.resolveRaftWorkspace(w, r, req.WorkspaceSlug)
+	if !ok {
+		return
+	}
+	assigneeType, assigneeID, err := h.callerAsAssignee(r, callerID, ws)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "caller cannot be assigned in this workspace")
+		return
+	}
+	h.delegateIssueUpdate(w, r, ws, UpdateIssueRequest{
+		AssigneeType: &assigneeType,
+		AssigneeID:   &assigneeID,
+	})
+}
+
+// RaftSetIssueStatus moves an issue the caller already owns. Ownership means
+// assignee or reporter: an agent may progress its own work, not reach into
+// someone else's. Broader authority is a role question => Step 3.
+func (h *Handler) RaftSetIssueStatus(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		raftIssueScope
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Status) == "" {
+		writeError(w, http.StatusBadRequest, "status is required")
+		return
+	}
+	ws, callerID, ok := h.resolveRaftWorkspace(w, r, req.WorkspaceSlug)
+	if !ok {
+		return
+	}
+
+	// Load the issue inside the resolved workspace so ownership is checked
+	// against the real row, not against anything the caller asserted.
+	q := r.URL.Query()
+	q.Set("workspace_id", uuidToString(ws.ID))
+	r.URL.RawQuery = q.Encode()
+	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+
+	assigneeType, assigneeID, err := h.callerAsAssignee(r, callerID, ws)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "caller cannot act in this workspace")
+		return
+	}
+	// Caller identity is the (type, id) pair the server resolved above, so both
+	// sides of these comparisons come from the server, never from the request.
+	isAssignee := issue.AssigneeType.Valid && issue.AssigneeType.String == assigneeType &&
+		issue.AssigneeID.Valid && uuidToString(issue.AssigneeID) == assigneeID
+	isCreator := issue.CreatorType == assigneeType && uuidToString(issue.CreatorID) == assigneeID
+	if !isAssignee && !isCreator {
+		writeError(w, http.StatusForbidden, "only the assignee or the creator may change this issue's status")
+		return
+	}
+
+	status := req.Status
+	h.delegateIssueUpdate(w, r, ws, UpdateIssueRequest{Status: &status})
 }

@@ -16,3 +16,11 @@ WHERE id = $1;
 
 -- name: SyncRaftUserName :exec
 UPDATE "user" SET name = $2, updated_at = now() WHERE id = $1;
+
+-- name: GetRaftIdentityByUserID :one
+-- Resolve which Raft principal a Multica user IS. Login keys identities by
+-- (raft_server_id, raft_sub); this is the reverse direction, needed whenever a
+-- request must answer "who is the caller, on the Raft side?" — e.g. claiming an
+-- issue as yourself, where the server must resolve the assignee rather than let
+-- the caller name one.
+SELECT * FROM raft_identity WHERE user_id = $1;

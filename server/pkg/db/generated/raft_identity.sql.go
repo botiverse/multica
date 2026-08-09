@@ -73,6 +73,31 @@ func (q *Queries) GetRaftIdentity(ctx context.Context, arg GetRaftIdentityParams
 	return i, err
 }
 
+const getRaftIdentityByUserID = `-- name: GetRaftIdentityByUserID :one
+SELECT id, user_id, raft_server_id, raft_sub, principal_type, raft_username, created_at, updated_at FROM raft_identity WHERE user_id = $1
+`
+
+// Resolve which Raft principal a Multica user IS. Login keys identities by
+// (raft_server_id, raft_sub); this is the reverse direction, needed whenever a
+// request must answer "who is the caller, on the Raft side?" — e.g. claiming an
+// issue as yourself, where the server must resolve the assignee rather than let
+// the caller name one.
+func (q *Queries) GetRaftIdentityByUserID(ctx context.Context, userID pgtype.UUID) (RaftIdentity, error) {
+	row := q.db.QueryRow(ctx, getRaftIdentityByUserID, userID)
+	var i RaftIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.RaftServerID,
+		&i.RaftSub,
+		&i.PrincipalType,
+		&i.RaftUsername,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const syncRaftUserName = `-- name: SyncRaftUserName :exec
 UPDATE "user" SET name = $2, updated_at = now() WHERE id = $1
 `

@@ -1516,6 +1516,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// the request body (integration-invoke can't set X-Workspace-ID), so it
 		// is not behind the workspace middleware.
 		r.Post("/api/raft/issues", h.RaftCreateIssue)
+		// Self-scoped work actions: the server resolves the caller as assignee,
+		// so an agent can take and progress its own work but cannot act for
+		// anyone else. Assigning others is a role capability and waits on the
+		// Step 3 role gate.
+		r.Post("/api/raft/issues/{id}/claim", h.RaftClaimIssue)
+		r.Post("/api/raft/issues/{id}/status", h.RaftSetIssueStatus)
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
