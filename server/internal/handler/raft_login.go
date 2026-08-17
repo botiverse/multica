@@ -180,8 +180,10 @@ func (h *Handler) authenticateRaft(ctx context.Context, code, redirectURI string
 // session (used by the web login page). Mirrors GoogleLogin.
 //
 // Multica personal access tokens are user-keyed, so every Raft principal —
-// including agents — maps to a Multica user-principal here. Representing an
-// agent as a first-class Multica agent entity is a separate, later step.
+// including agents — maps to a Multica user-principal here. That is the whole
+// mapping, not a stepping stone: a Raft agent is a person on Multica and must
+// NOT become a Multica agent entity. Multica's agent type is for workers Multica
+// executes itself. See findOrCreateRaftUser and raft_identity_model_test.go.
 func (h *Handler) RaftLogin(w http.ResponseWriter, r *http.Request) {
 	var req RaftLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -254,9 +256,9 @@ func (h *Handler) fetchRaftUserInfo(ctx context.Context, baseURL, accessToken st
 // deterministic, non-routable email so the user.email UNIQUE/NOT NULL contract
 // holds without inventing a real address) plus the link row in one transaction.
 // isNew reports whether the user was created on this call.
+// A Raft agent and a Raft human are provisioned IDENTICALLY here, on purpose:
+// both are people on Multica. There is deliberately no branch on principal type.
 func (h *Handler) findOrCreateRaftUser(ctx context.Context, info raftUserInfo) (user db.User, isNew bool, err error) {
-	isAgent := raftPrincipalType(info.Type) == "agent"
-
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		return db.User{}, false, err
@@ -325,39 +327,22 @@ func (h *Handler) findOrCreateRaftUser(ctx context.Context, info raftUserInfo) (
 		return db.User{}, false, merr
 	}
 
-	// 3. A Raft agent is additionally a first-class external agent in the
-	// workspace: executed on Raft, not Multica (runtime_mode='external',
-	// runtime_id NULL, external_ref back to the Raft agent).
-	if isAgent {
-		if _, aerr := qtx.GetExternalAgentByRef(ctx, db.GetExternalAgentByRefParams{
-			ExternalServerID: raftText(info.ServerID),
-			ExternalAgentID:  raftText(info.Sub),
-		}); isNotFound(aerr) {
-			newAgent, cerr := qtx.CreateExternalAgent(ctx, db.CreateExternalAgentParams{
-				WorkspaceID:      ws.ID,
-				Name:             raftDisplayName(info),
-				ExternalServerID: raftText(info.ServerID),
-				ExternalAgentID:  raftText(info.Sub),
-			})
-			if cerr != nil {
-				return db.User{}, false, cerr
-			}
-			// permission_mode='public_to' is only half the contract: canInvokeAgent
-			// reads the invocation-target list, so without a target the agent is
-			// public to nobody and remains unassignable. Migration 130 pairs
-			// visibility='workspace' with exactly one workspace target; do the same
-			// here so an agent that joined a workspace can actually be given work.
-			if terr := qtx.CreateAgentInvocationTarget(ctx, db.CreateAgentInvocationTargetParams{
-				AgentID:    newAgent.ID,
-				TargetType: "workspace",
-				TargetID:   ws.ID,
-			}); terr != nil {
-				return db.User{}, false, terr
-			}
-		} else if aerr != nil {
-			return db.User{}, false, aerr
-		}
-	}
+	// 3. A Raft agent gets NO Multica `agent` row. On Multica a Raft principal —
+	// human or agent — is a person: a user + a workspace member, and nothing
+	// else. Multica's `agent` type is for WORKERS that Multica itself executes,
+	// which is why it carries a runtime requirement and an invocation allow-list.
+	// Giving a Raft agent that type made it exist twice (member AND agent),
+	// let the claim action pick the wrong identity (assignee_type=agent), and
+	// made the UI demand a runtime for something Multica must never run.
+	//
+	// The split already exists in Multica's own credentials and we now match it:
+	// a person carries a `mul_` personal access token and drives the CLI, while
+	// a worker carries a server-minted, task-scoped `mat_` token (see
+	// middleware/auth.go — they are separate auth families). A Raft agent is on
+	// the person side of that line.
+	//
+	// Contract (stdrc, 2026-08-17): "raft 上的 agent 在 multica 上是像人一样的
+	// 存在 ... Multica 上的 Agent 只用来做 worker".
 
 	if _, err = qtx.MarkUserOnboarded(ctx, user.ID); err != nil {
 		return db.User{}, false, err
@@ -373,16 +358,6 @@ func (h *Handler) findOrCreateRaftUser(ctx context.Context, info raftUserInfo) (
 	if err = qtx.SyncRaftWorkspaceName(ctx, db.SyncRaftWorkspaceNameParams{ID: ws.ID, Name: raftServerWorkspaceName(info)}); err != nil {
 		return db.User{}, false, err
 	}
-	if isAgent {
-		if err = qtx.SyncExternalAgentName(ctx, db.SyncExternalAgentNameParams{
-			Name:             displayName,
-			ExternalServerID: raftText(info.ServerID),
-			ExternalAgentID:  raftText(info.Sub),
-		}); err != nil {
-			return db.User{}, false, err
-		}
-	}
-
 	if err = tx.Commit(ctx); err != nil {
 		return db.User{}, false, err
 	}

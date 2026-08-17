@@ -11,150 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createExternalAgent = `-- name: CreateExternalAgent :one
-INSERT INTO agent (
-    workspace_id, name, runtime_mode, provider,
-    external_server_id, external_agent_id, status, visibility, permission_mode
-) VALUES (
-    $1, $2, 'external', 'raft', $3, $4, 'idle', 'workspace', 'public_to'
-)
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, provider, external_server_id, external_agent_id
-`
-
-type CreateExternalAgentParams struct {
-	WorkspaceID      pgtype.UUID `json:"workspace_id"`
-	Name             string      `json:"name"`
-	ExternalServerID pgtype.Text `json:"external_server_id"`
-	ExternalAgentID  pgtype.Text `json:"external_agent_id"`
-}
-
-// An external agent represents a Raft agent that has joined this workspace. It
-// is executed on Raft, not by Multica: runtime_id stays NULL and external_ref
-// (external_server_id, external_agent_id) points back to the real executor.
-//
-// permission_mode is set EXPLICITLY rather than left to the column default.
-// The default is 'private', which means deny-by-default in canInvokeAgent:
-// only the agent's owner may invoke or be assigned it. An external agent has
-// no owner (it belongs to a Raft principal, not a Multica user), so the
-// default made it permanently unassignable — an agent that joins a workspace
-// to take work could never be given any. It also contradicted the
-// visibility='workspace' set on the same row; migration 130 defines the pair
-// as visibility='workspace' -> permission_mode='public_to' + one workspace
-// target, and this now matches that. The caller inserts the workspace target.
-func (q *Queries) CreateExternalAgent(ctx context.Context, arg CreateExternalAgentParams) (Agent, error) {
-	row := q.db.QueryRow(ctx, createExternalAgent,
-		arg.WorkspaceID,
-		arg.Name,
-		arg.ExternalServerID,
-		arg.ExternalAgentID,
-	)
-	var i Agent
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.AvatarUrl,
-		&i.RuntimeMode,
-		&i.RuntimeConfig,
-		&i.Visibility,
-		&i.Status,
-		&i.MaxConcurrentTasks,
-		&i.OwnerID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Description,
-		&i.RuntimeID,
-		&i.Instructions,
-		&i.ArchivedAt,
-		&i.ArchivedBy,
-		&i.CustomEnv,
-		&i.CustomArgs,
-		&i.McpConfig,
-		&i.Model,
-		&i.ThinkingLevel,
-		&i.ComposioToolkitAllowlist,
-		&i.PermissionMode,
-		&i.Kind,
-		&i.SystemKey,
-		&i.DisabledRuntimeSkills,
-		&i.ServiceTier,
-		&i.Provider,
-		&i.ExternalServerID,
-		&i.ExternalAgentID,
-	)
-	return i, err
-}
-
-const getExternalAgentByRef = `-- name: GetExternalAgentByRef :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, provider, external_server_id, external_agent_id FROM agent
-WHERE runtime_mode = 'external'
-  AND external_server_id = $1
-  AND external_agent_id = $2
-`
-
-type GetExternalAgentByRefParams struct {
-	ExternalServerID pgtype.Text `json:"external_server_id"`
-	ExternalAgentID  pgtype.Text `json:"external_agent_id"`
-}
-
-func (q *Queries) GetExternalAgentByRef(ctx context.Context, arg GetExternalAgentByRefParams) (Agent, error) {
-	row := q.db.QueryRow(ctx, getExternalAgentByRef, arg.ExternalServerID, arg.ExternalAgentID)
-	var i Agent
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.AvatarUrl,
-		&i.RuntimeMode,
-		&i.RuntimeConfig,
-		&i.Visibility,
-		&i.Status,
-		&i.MaxConcurrentTasks,
-		&i.OwnerID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Description,
-		&i.RuntimeID,
-		&i.Instructions,
-		&i.ArchivedAt,
-		&i.ArchivedBy,
-		&i.CustomEnv,
-		&i.CustomArgs,
-		&i.McpConfig,
-		&i.Model,
-		&i.ThinkingLevel,
-		&i.ComposioToolkitAllowlist,
-		&i.PermissionMode,
-		&i.Kind,
-		&i.SystemKey,
-		&i.DisabledRuntimeSkills,
-		&i.ServiceTier,
-		&i.Provider,
-		&i.ExternalServerID,
-		&i.ExternalAgentID,
-	)
-	return i, err
-}
-
-const syncExternalAgentName = `-- name: SyncExternalAgentName :exec
-UPDATE agent SET name = $1, updated_at = now()
-WHERE runtime_mode = 'external'
-  AND external_server_id = $2
-  AND external_agent_id = $3
-`
-
-type SyncExternalAgentNameParams struct {
-	Name             string      `json:"name"`
-	ExternalServerID pgtype.Text `json:"external_server_id"`
-	ExternalAgentID  pgtype.Text `json:"external_agent_id"`
-}
-
-func (q *Queries) SyncExternalAgentName(ctx context.Context, arg SyncExternalAgentNameParams) error {
-	_, err := q.db.Exec(ctx, syncExternalAgentName, arg.Name, arg.ExternalServerID, arg.ExternalAgentID)
-	return err
-}
-
 const syncRaftWorkspaceName = `-- name: SyncRaftWorkspaceName :exec
+
 UPDATE workspace SET name = $2, updated_at = now() WHERE id = $1
 `
 
@@ -163,6 +21,12 @@ type SyncRaftWorkspaceNameParams struct {
 	Name string      `json:"name"`
 }
 
+// Raft principals do NOT get a Multica `agent` row. On Multica a Raft agent is
+// a person (user + workspace member); Multica's `agent` type is for workers
+// Multica executes itself, which is why it carries a runtime and an invocation
+// allow-list. The external-agent queries that used to live here
+// (GetExternalAgentByRef / CreateExternalAgent / SyncExternalAgentName) are gone
+// with that model. See handler/raft_login.go and raft_identity_model_test.go.
 func (q *Queries) SyncRaftWorkspaceName(ctx context.Context, arg SyncRaftWorkspaceNameParams) error {
 	_, err := q.db.Exec(ctx, syncRaftWorkspaceName, arg.ID, arg.Name)
 	return err

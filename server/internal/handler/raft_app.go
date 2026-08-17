@@ -3,7 +3,6 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -341,36 +340,20 @@ func (h *Handler) resolveRaftWorkspace(w http.ResponseWriter, r *http.Request, s
 // resolves this so the caller can never name someone else. A Raft agent that
 // has joined this workspace is represented by an external agent row, so it
 // assigns as that agent; a human Raft principal assigns as a member.
-func (h *Handler) callerAsAssignee(r *http.Request, callerID string, ws db.Workspace) (string, string, error) {
-	callerUUID, err := util.ParseUUID(callerID)
-	if err != nil {
+// A Raft caller is ALWAYS assigned as a member, whether it is a human or an
+// agent. On Multica a Raft principal is a person; Multica's `agent` assignee
+// type belongs to workers Multica executes itself.
+//
+// This used to resolve an agent caller to its Multica `agent` row and return
+// assignee_type="agent". That was the wrong half of a duplicate identity: a
+// Raft agent had both a member row and an agent row, and this function picked
+// the agent one. The agent row is no longer created (see findOrCreateRaftUser).
+func (h *Handler) callerAsAssignee(_ *http.Request, callerID string, _ db.Workspace) (string, string, error) {
+	if _, err := util.ParseUUID(callerID); err != nil {
 		return "", "", err
 	}
-	ident, err := h.Queries.GetRaftIdentityByUserID(r.Context(), callerUUID)
-	if err != nil {
-		// Not a Raft principal (or no identity row): fall back to member.
-		return "member", callerID, nil
-	}
-	if ident.PrincipalType != "agent" {
-		return "member", callerID, nil
-	}
-	agent, err := h.Queries.GetExternalAgentByRef(r.Context(), db.GetExternalAgentByRefParams{
-		ExternalServerID: raftText(ident.RaftServerID),
-		ExternalAgentID:  raftText(ident.RaftSub),
-	})
-	if err != nil {
-		// Agent principal with no external agent row in ANY workspace.
-		return "member", callerID, nil
-	}
-	if uuidToString(agent.WorkspaceID) != uuidToString(ws.ID) {
-		// The agent exists, but not in this workspace: assigning it here would
-		// cross a workspace boundary. Fail rather than silently widen scope.
-		return "", "", errRaftAgentNotInWorkspace
-	}
-	return "agent", uuidToString(agent.ID), nil
+	return "member", callerID, nil
 }
-
-var errRaftAgentNotInWorkspace = errors.New("raft agent is not a member of this workspace")
 
 // delegateIssueUpdate hands the request to UpdateIssue, which owns all the real
 // update logic (events, timeline, notifications). Same delegation shape as
