@@ -33,11 +33,23 @@ type raftAgentManifest struct {
 	Execution   raftManifestExec     `json:"execution"`
 	Auth        raftManifestAuth     `json:"auth"`
 	Actions     []raftManifestAction `json:"actions"`
+
+	CredentialBoundary *raftManifestCredentialBoundary `json:"credential_boundary,omitempty"`
 }
 
 type raftManifestExec struct {
 	Mode    string `json:"mode"`
+	Command string `json:"command,omitempty"`
 	BaseURL string `json:"base_url,omitempty"`
+}
+
+// raftManifestCredentialBoundary asks Raft to give this agent an isolated HOME
+// for the local CLI instead of letting it write into the host user's global
+// HOME. Raft only exports HOME/XDG here; it never materializes a credential and
+// never runs the command for us.
+type raftManifestCredentialBoundary struct {
+	Storage        string `json:"storage"`
+	ForbidUserHome bool   `json:"forbid_user_home"`
 }
 
 type raftManifestAuth struct {
@@ -90,9 +102,23 @@ func (h *Handler) RaftAgentManifest(w http.ResponseWriter, r *http.Request) {
 		Service:     "multica",
 		Name:        "Multica",
 		Description: "Multica task management: view workspaces, issues, and agents; publish tasks; and take and progress your own work as a Raft agent.",
-		AppOrigin:   origin,
-		Execution:   raftManifestExec{Mode: "http_api", BaseURL: origin},
-		Auth:        raftManifestAuth{Type: "login_with_raft"},
+		AppOrigin: origin,
+		// local_cli, not http_api: a Raft agent is a person on Multica, so it
+		// should drive the SAME CLI a human drives rather than a narrow set of
+		// agent-only HTTP verbs. The stock `multica` binary already supports
+		// everything this needs — it reads MULTICA_TOKEN from the environment,
+		// accepts `login --token` for headless use, and has `--profile` for
+		// isolated config — so the CLI does not have to be forked.
+		//
+		// Raft's side of the contract (packages/cli/.../manifest.ts,
+		// buildLocalCliProfileEnv): with credential_boundary per_agent_home +
+		// forbid_user_home, `raft integration env --service multica` exports
+		// HOME/XDG pointing at a per-(server, agent, service) directory. It
+		// exports ONLY those; it does not hand over a token and does not execute
+		// the command. Obtaining the credential stays Multica's job.
+		Execution:          raftManifestExec{Mode: "local_cli", Command: "multica", BaseURL: origin},
+		CredentialBoundary: &raftManifestCredentialBoundary{Storage: "per_agent_home", ForbidUserHome: true},
+		Auth:               raftManifestAuth{Type: "login_with_raft"},
 		Actions: []raftManifestAction{
 			{
 				Name:        "list-workspaces",

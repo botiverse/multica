@@ -90,6 +90,21 @@ const nextConfig: NextConfig = {
               source: "/uploads/:path*",
               destination: `${remoteApiUrl}/uploads/:path*`,
             },
+            // The Raft agent-behavior manifest is served by the Go backend, but
+            // a Raft agent discovers it at the app's PUBLIC origin — which is
+            // this Next app. Without these rewrites the manifest 404s for every
+            // single-host deployment and `raft integration env` reports "agent
+            // behavior manifest was not found", so the whole local-CLI
+            // integration silently never engages. Both spellings are served
+            // (router.go registers the slock- alias for older Raft builds).
+            {
+              source: "/.well-known/raft-agent-manifest.json",
+              destination: `${remoteApiUrl}/.well-known/raft-agent-manifest.json`,
+            },
+            {
+              source: "/.well-known/slock-agent-manifest.json",
+              destination: `${remoteApiUrl}/.well-known/slock-agent-manifest.json`,
+            },
           ]
         : [],
       fallback: [],
