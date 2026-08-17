@@ -106,6 +106,11 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"project":                            workspaceDelete,
 	"project_resource":                   workspaceDelete,
 	"quick_action":                       workspaceDelete,
+	// Keyed by (raft server, raft sub) -> Multica user, not by workspace. The
+	// user survives a workspace deletion and may belong to other workspaces, so
+	// dropping the link here would silently re-provision them as a brand new
+	// Multica user on their next Login with Raft. Same call as "user".
+	"raft_identity":                      workspaceDeleteKeep,
 	"runtime_profile":                    workspaceDelete,
 	"schema_migrations":                  workspaceDeleteKeep,
 	"seat_capacity_outbox":               workspaceDeleteSettle,
