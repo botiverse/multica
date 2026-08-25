@@ -382,7 +382,7 @@ func resolveServerWorkspace(ctx context.Context, qtx *db.Queries, info raftUserI
 	created, err := qtx.CreateWorkspace(ctx, db.CreateWorkspaceParams{
 		Name:        name,
 		Slug:        slug,
-		IssuePrefix: generateIssuePrefix(name),
+		IssuePrefix: defaultIssuePrefixFromSlug(slug),
 	})
 	if err != nil {
 		return db.Workspace{}, "", err

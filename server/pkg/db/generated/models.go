@@ -50,9 +50,6 @@ type Agent struct {
 	PermissionMode        string      `json:"permission_mode"`
 	Kind                  string      `json:"kind"`
 	SystemKey             pgtype.Text `json:"system_key"`
-	Provider              pgtype.Text `json:"provider"`
-	ExternalServerID      pgtype.Text `json:"external_server_id"`
-	ExternalAgentID       pgtype.Text `json:"external_agent_id"`
 	DisabledRuntimeSkills []byte      `json:"disabled_runtime_skills"`
 	ServiceTier           pgtype.Text `json:"service_tier"`
 	StarterPrompts        []byte      `json:"starter_prompts"`
